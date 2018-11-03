@@ -6,6 +6,8 @@ class Sonar:
 
     def __init__(self, GPIO_TRIGGER=10, GPIO_ECHO=8):
 
+        GPIO.setmode(GPIO.BOARD)
+
         self.GPIO_TRIGGER = GPIO_TRIGGER
         self.GPIO_ECHO = GPIO_ECHO
 
@@ -17,11 +19,11 @@ class Sonar:
 
     def distance(self):
         # set Trigger to HIGH
-        GPIO.output(self.GPIO_TRIGGER, True)
+        GPIO.output(self.GPIO_TRIGGER, GPIO.HIGH)
 
         # set Trigger after 0.01ms to LOW
         time.sleep(0.00001)
-        GPIO.output(self.GPIO_TRIGGER, False)
+        GPIO.output(self.GPIO_TRIGGER, GPIO.LOW)
 
         StartTime = time.time()
         StopTime = time.time()
@@ -55,12 +57,14 @@ class Sonar:
 
                 dist = self.distance()
                 print ("Measured Distance = %.1f cm" % dist)
-                time.sleep(0.5)
+                time.sleep(0.2)
 
             # Reset by pressing CTRL + C
         except KeyboardInterrupt:
             print("Measurement stopped by User")
             #GPIO.cleanup()
+
+        print('done testing sonar.')
 
 
 

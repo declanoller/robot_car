@@ -15,6 +15,7 @@ class Robot:
 
 
         #GPIO Mode (BOARD / BCM)
+        GPIO.cleanup()
         GPIO.setmode(GPIO.BOARD)
 
 
@@ -37,6 +38,7 @@ class Robot:
 
         self.policy_NN = None
         self.N_state_terms = 6
+        self.params = {}
         self.params['N_hidden_layer_nodes'] = 50
         self.params['NL_fn'] = 'tanh'
         self.params['epsilon'] = 0.05
@@ -357,10 +359,14 @@ class Robot:
 
         if self.motor_enable:
             print('testing motor!')
-            self.motor.wheelTest(test_time=5)
+            #self.motor.wheelTest(test_time=2)
         if self.sonar_enable:
-            print('testing sonar!')
+            print('testing sonar! (front)')
             self.sonar_forward.distanceTestLoop(test_time=3)
+            print('testing sonar! (left)')
+            self.sonar_left.distanceTestLoop(test_time=3)
+            print('testing sonar! (right)')
+            self.sonar_right.distanceTestLoop(test_time=3)
         if self.compass_enable:
             print('testing compass!')
             #Compass uses I2C pins, which are 3 and 5 for the RPi 3.
@@ -372,4 +378,5 @@ class Robot:
 
 
     def __del__(self):
+        del self.motor
         GPIO.cleanup()

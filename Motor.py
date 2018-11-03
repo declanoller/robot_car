@@ -6,6 +6,8 @@ class Motor:
 
     def __init__(self, left_forward_pin=33, left_reverse_pin=31, right_forward_pin=37, right_reverse_pin=35):
 
+        GPIO.setmode(GPIO.BOARD)
+
         self.left_forward_pin = left_forward_pin
         self.left_reverse_pin = left_reverse_pin
         self.right_forward_pin = right_forward_pin
@@ -22,8 +24,11 @@ class Motor:
         GPIO.setup(self.right_forward_pin, GPIO.OUT)
         GPIO.setup(self.right_reverse_pin, GPIO.OUT)
 
+        self.stopAllWheels()
+
 
     def __del__(self):
+        print('Motor __del__: setting pins low.')
         GPIO.output(self.left_forward_pin, GPIO.LOW)
         GPIO.output(self.left_reverse_pin, GPIO.LOW)
         GPIO.output(self.right_forward_pin, GPIO.LOW)
@@ -122,7 +127,7 @@ class Motor:
                 self.stopAllWheels()
                 break
 
-        GPIO.cleanup()
+        #GPIO.cleanup()
 
 
 

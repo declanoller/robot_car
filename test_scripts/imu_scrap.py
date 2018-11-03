@@ -198,3 +198,11 @@ while True:
 				t_print = hack
 
 		time.sleep(poll_interval*1.0/1000.0)
+
+
+
+
+
+'''Gyro = data["gyro"]
+print('\ngyro: {:.4f}, {:.4f}, {:.4f}'.format(Gyro[0], Gyro[1], Gyro[2]))
+print('fusion: {:.4f}, {:.4f}, {:.4f}'.format(fusion_pose[0], fusion_pose[1], fusion_pose[2]))'''

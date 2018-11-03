@@ -2,7 +2,6 @@ import sys
 sys.path.append('.')
 import RTIMU
 import time
-import math
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -10,12 +9,9 @@ SETTINGS_FILE = "RTIMULib"
 s = RTIMU.Settings(SETTINGS_FILE)
 imu = RTIMU.RTIMU(s)
 
-
 if (not imu.IMUInit()):
 	print('IMU init failed.')
 	sys.exit(1)
-
-
 
 imu.setSlerpPower(0.02)
 imu.setGyroEnable(True)
@@ -52,16 +48,11 @@ print(gyro_meas.shape)
 fusion_meas = np.array(fusion_meas)
 print(fusion_meas.shape)
 
-
-
 fig, axes = plt.subplots(2, 3, figsize=(16,12))
-
 for i in range(3):
 
 	axes[0, i].plot(gyro_meas[:,i])
 	axes[1, i].plot(fusion_meas[:,i])
-
-
 
 plt.savefig('meas.png')
 
