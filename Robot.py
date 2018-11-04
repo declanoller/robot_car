@@ -1,17 +1,21 @@
-import time
+calculatePositionimport time
 import RPi.GPIO as GPIO
 from Motor import Motor
 from Sonar import Sonar
 from Compass import Compass
+from CommMQTT import CommMQTT
 
+import matplotlib.pyplot as plt
 from random import randint, random, sample, choice
 import numpy as np
 from math import sin, cos, tan, pi
 
+import curses
+
 
 class Robot:
 
-    def __init__(self, motor_enable=True, sonar_enable=True, compass_enable=True):
+    def __init__(self, motor_enable=True, sonar_enable=True, compass_enable=True, **kwargs):
 
 
         #GPIO Mode (BOARD / BCM)
@@ -24,7 +28,7 @@ class Robot:
         self.compass_enable = compass_enable
 
         if self.motor_enable:
-            self.motor = Motor(left_forward_pin=33, left_reverse_pin=31, right_forward_pin=37, right_reverse_pin=35)
+            self.motor = Motor(left_forward_pin=31, left_reverse_pin=33, right_forward_pin=35, right_reverse_pin=37)
             print('Motor object created.')
         if self.sonar_enable:
             self.sonar_forward = Sonar(GPIO_TRIGGER=10, GPIO_ECHO=8)
@@ -35,79 +39,148 @@ class Robot:
             #Compass uses I2C pins, which are 3 (SDA) and 5 (SCL) for the RPi 3.
             self.compass = Compass()
             print('Compass object created.')
+        if self.MQTT_enable:
+            #Compass uses I2C pins, which are 3 (SDA) and 5 (SCL) for the RPi 3.
+            self.comm = CommMQTT()
+            print('CommMQTT object created.')
 
-        self.policy_NN = None
+
         self.N_state_terms = 6
-        self.params = {}
-        self.params['N_hidden_layer_nodes'] = 50
-        self.params['NL_fn'] = 'tanh'
-        self.params['epsilon'] = 0.05
-        self.params['epsilon_decay'] = 0.99
+
+        self.passed_params = {}
+        check_params = []
+        for param in check_params:
+            if kwargs.get(param, None) is not None:
+                self.passed_params[param] = kwargs.get(param, None)
+
         #Here, the 4 actions will be, in order: forward (F), backward (B), CCW, clockwise turn (CW)
         self.N_actions = 4
         self.arena_side = 1.0
+        self.xlims = np.array([-0.5,0.5])
+        self.ylims = np.array([-0.5,0.5])
+        self.lims = np.array((self.xlims,self.ylims))
+        self.robot_draw_rad = self.arena_side/20.0
+        self.target_draw_rad = self.robot_draw_rad
 
         #These will be the positions in meters, where (0,0) is the center of the arena.
         self.target_positions = [(-0.5, -0.5), (0.5, 0.5)]
         self.N_targets = len(self.target_positions)
+
+        test_IR_read = self.comm.getLatestReadingIR()
+        assert len(test_IR_read)==self.N_targets, 'Number of targets ({}) returned from CommMQTT doesn\'t match N_targets ({}) '.format(len(test_IR_read), self.N_targets)
         self.current_target = 0
 
 
 
-
-
-    def updateEpsilon(self):
-        self.params['epsilon'] *= self.params['epsilon_decay']
+    ########### Functions that the Agent class expects.
 
 
     def getStateVec(self):
 
-        assert self.sonar_enable, 'No sonar! exiting.'
-        assert self.compass_enable, 'No compass! exiting.'
+        target_pos = self.target_positions[self.current_target]
 
-        d1 = self.sonar_forward.distance()
-        d2 = self.sonar_left.distance()
-        d3 = self.sonar_right.distance()
-        compass_reading = self.compass.getReading()[2] #Is it 2? figure out.
+        position, compass_reading = self.getPosition()
+        normed_angle = compass_reading/pi
 
+        return(np.concatenate((position, normed_angle, target_pos)))
 
 
+    def getPassedParams(self):
+        #This returns a dict of params that were passed to the agent, that apply to the agent.
+        #So if you pass it a param for 'reward', it will return that, but it won't return the
+        #default val if you didn't pass it.
+        return(self.passed_params)
 
 
+    def iterate(self, action):
+        self.doAction(action)
+
+        r = self.reward()
+        if r > 0:
+            self.resetTarget()
+
+        return(r, self.getStateVec())
 
 
-
-
-
-    def epsGreedyAction(self, state):
-
-        assert self.policy_NN is not None, 'No NN to get action from! crashing.'
-
-        if random()>self.params['epsilon']:
-            return(self.greedyAction(state_vec))
+    def reward(self):
+        triggered_IR_sensors = self.pollTargetServer()
+        if triggered_IR_sensors[self.current_target]==1:
+            self.resetTarget()
+            return(1.0)
         else:
-            return(self.getRandomAction())
+            return(-0.01)
 
 
-    def getRandomAction(self):
-        return(randint(0,self.N_actions-1))
+    def initEpisode(self):
+        self.resetStateValues()
+        self.resetTarget()
 
 
-    def forwardPassQ(self, state_vec):
-        return(self.policy_NN(state_vec))
+    def resetStateValues(self):
+
+        self.pos, self.angle = self.getPosition()
+
+        self.pos_hist = np.array([self.pos])
+        self.angle_hist = np.array([self.angle])
+        self.action_hist = [0]
+        self.t = [0]
+        self.r_hist = []
 
 
-    def singleStateForwardPassQ(self, state_vec):
-        qsa = torch.squeeze(self.forwardPassQ(torch.unsqueeze(torch.Tensor(state_vec), dim=0)))
-        return(qsa)
+    def drawState(self, ax):
 
-    def greedyAction(self,state_vec):
-        qsa = self.singleStateForwardPassQ(state_vec)
-        return(torch.argmax(qsa))
+        ax.clear()
+        ax.set_xlim(tuple(self.xlims))
+        ax.set_ylim(tuple(self.ylims))
+
+        ax.set_xlabel('x')
+        ax.set_ylabel('y')
+        ax.set_aspect('equal')
+
+        puck = plt.Circle(tuple(self.pos), self.robot_draw_rad, color='tomato')
+        ax.add_artist(puck)
+
+        if self.target is not None:
+            target = plt.Circle(tuple(self.target_positions[self.current_target]), self.target_draw_rad, color='seagreen')
+            ax.add_artist(target)
 
 
+    def plotStateParams(self, axes):
 
-    def takeAction(self, action):
+        ax1 = axes[0]
+        ax2 = axes[1]
+        ax3 = axes[2]
+
+        ax1.clear()
+        ax1.plot(self.pos_hist[:,0][-1000:],label='x')
+        ax1.plot(self.pos_hist[:,1][-1000:],label='y')
+        ax1.legend()
+
+        ax2.clear()
+        ax2.plot(self.action_hist[-1000:],label='a')
+        ax2.set_yticks([0,1,2,3])
+        ax2.set_yticklabels(['F','B','CCW','CW'])
+        ax2.legend()
+
+
+        ax3.clear()
+        ax3.plot(self.r_hist[-1000:],label='R')
+        ax3.legend()
+
+
+    ########################### Functions for interacting with the environment.
+
+
+    def resetTarget(self):
+        other_sensors = [i for i in range(self.N_targets) if i!=self.current_target]
+        self.current_target = random.choice(other_sensors)
+
+
+    def pollTargetServer(self):
+        return(self.comm.getLatestReadingIR())
+
+
+    def doAction(self, action):
 
         assert self.motor_enable, 'Motor not enabled! crashing.'
 
@@ -120,70 +193,6 @@ class Robot:
             self.motor.turn90CCW()
         elif action==3:
             self.motor.turn90CW()
-
-
-
-
-    def getReward(self):
-
-        triggered_IR_sensors = self.pollTargetServer()
-
-        if triggered_IR_sensors[self.current_target]==1:
-            other_sensors = [i for i in range(self.N_targets) if i!=self.current_target]
-            self.current_target = random.choice(other_sensors)
-            return(1.0)
-        else:
-            return(-0.01)
-
-
-
-    def pollTargetServer(self):
-        #stuff...
-        return([0]*self.N_targets)
-
-
-    def directControlFromModel(self, model_fname, N_steps=10**3):
-
-        import torch
-        from DQN import DQN
-
-        self.dtype = torch.float32
-        torch.set_default_dtype(self.dtype)
-
-        D_in, H, D_out = self.N_state_terms, self.params['N_hidden_layer_nodes'], self.N_actions
-
-        NL_fn_dict = {'relu':F.relu, 'tanh':torch.tanh, 'sigmoid':F.sigmoid}
-        NL_fn = NL_fn_dict[self.params['NL_fn']]
-
-        self.policy_NN = DQN(D_in,H,D_out,NL_fn=NL_fn)
-
-        self.policy_NN.load_state_dict(torch.load(model_fname))
-
-        self.params['epsilon'] = 0
-
-        for i in range(N_steps):
-
-            if i%int(N_steps/10) == 0:
-                print('iteration ',i)
-
-            self.updateEpsilon()
-
-            s = self.getStateVec()
-            a = self.epsGreedyAction(s)
-            r, s_next = self.takeAction(a)
-
-            self.R_tot += r.item()
-            self.R_tot_hist.append(self.R_tot/(i+1))
-
-            if r.item() > 0:
-                self.resetTarget()
-
-
-        print('self.R_tot/N_steps: {:.2f}'.format(self.R_tot/N_steps))
-        return(self.R_tot/N_steps)
-
-
-
 
 
     def touchingSameWall(self, a, a_theta, b, b_theta):
@@ -241,8 +250,18 @@ class Robot:
         return(None)
 
 
-    def getPosition(self, d1, d2, d3, theta):
+    def calculatePosition(self, d1, d2, d3, theta):
 
+        #This uses some...possibly sketchy geometry, but I think it should work
+        #generally, no matter which direction it's pointed in.
+        #
+        #There are 3 possibilities for the configuration: two sonars are hitting the same wall,
+        #two sonars are hitting opposite walls, or both.
+        #If it's one of the first two, the position is uniquely specified, and you just have to
+        #do the painful geometry for it. If it's the third, it's actually not specified, and you
+        #can only make an educated guess within some range.
+        #
+        #d1 is the front sonar, d2 the left, d3 the right.
         pair12 = [d1, theta, d2, theta + pi/2]
         pair23 = [d2, theta + pi/2, d3, theta - pi/2]
         pair13 = [d1, theta, d3, theta - pi/2]
@@ -352,7 +371,23 @@ class Robot:
             return(sol[0], sol[1])
 
 
+    def getPosition(self):
 
+        assert self.sonar_enable, 'No sonar! exiting.'
+        assert self.compass_enable, 'No compass! exiting.'
+
+        d1 = self.sonar_forward.distance()
+        d2 = self.sonar_left.distance()
+        d3 = self.sonar_right.distance()
+        compass_reading = self.compass.getCompassDirection() #From now on, the function will prepare and scale everything.
+
+        position = self.calculatePosition(d1, d2, d3, compass_reading)
+        self.position = position
+        self.angle = compass_reading
+
+        return(position, compass_reading)
+
+    ################# Functions for interacting directly with the robot.
 
 
     def testAllDevices(self):
@@ -373,8 +408,53 @@ class Robot:
             self.compass.readCompassLoop(test_time=4)
 
 
+    def DCloop(self, stdscr):
+
+        delay_time = 0.2
+
+        while True:
+            c = stdscr.getch()
+            if c == curses.KEY_LEFT:
+                stdscr.addstr('Pressed Left key, turning CCW\n')
+                self.doAction(2)
+                time.sleep(delay_time)
+
+            if c == curses.KEY_RIGHT:
+                stdscr.addstr('Pressed Right key, turning CW\n')
+                self.doAction(3)
+                time.sleep(delay_time)
+
+            if c == curses.KEY_UP:
+                stdscr.addstr('Pressed Up key, going straight\n')
+                self.doAction(0)
+                time.sleep(delay_time)
+
+            if c == curses.KEY_DOWN:
+                stdscr.addstr('Pressed Down key, going backwards\n')
+                self.doAction(1)
+                time.sleep(delay_time)
+
+            elif c == ord('q'):
+                print('you pressed q! exiting')
+                break  # Exit the while loop
 
 
+    def directControl(self):
+        print('entering curses loop')
+        curses.wrapper(self.DCloop)
+        print('exited curses loop.')
+
+
+
+
+
+    ############ Bookkeeping functions
+
+    def addToHist(self):
+        self.pos_hist = np.concatenate((self.pos_hist,[self.position]))
+        self.angle_hist = np.concatenate((self.angle_hist, [self.angle]))
+        self.t.append(self.t[-1] + self.time_step)
+        self.r_hist.append(self.reward())
 
 
     def __del__(self):

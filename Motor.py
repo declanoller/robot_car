@@ -4,7 +4,7 @@ import RPi.GPIO as GPIO
 
 class Motor:
 
-    def __init__(self, left_forward_pin=33, left_reverse_pin=31, right_forward_pin=37, right_reverse_pin=35):
+    def __init__(self, left_forward_pin=31, left_reverse_pin=33, right_forward_pin=37, right_reverse_pin=35):
 
         GPIO.setmode(GPIO.BOARD)
 
@@ -13,7 +13,8 @@ class Motor:
         self.right_forward_pin = right_forward_pin
         self.right_reverse_pin = right_reverse_pin
 
-        self.friction_fudge_factor = 1.0
+        carpet = 0.3
+        self.friction_fudge_factor = carpet
         self.turn_time = 1.0
         self.straight_travel_time = 1.0
 
@@ -44,24 +45,15 @@ class Motor:
 
 
     def goBackward(self):
-        GPIO.output(self.left_backward_pin, GPIO.HIGH)
-        GPIO.output(self.right_backward_pin, GPIO.HIGH)
+        GPIO.output(self.left_reverse_pin, GPIO.HIGH)
+        GPIO.output(self.right_reverse_pin, GPIO.HIGH)
         time.sleep(self.straight_travel_time*self.friction_fudge_factor)
-        GPIO.output(self.left_backward_pin, GPIO.LOW)
-        GPIO.output(self.right_backward_pin, GPIO.LOW)
+        GPIO.output(self.left_reverse_pin, GPIO.LOW)
+        GPIO.output(self.right_reverse_pin, GPIO.LOW)
 
 
 
     def turn90CCW(self):
-
-        GPIO.output(self.right_forward_pin, GPIO.HIGH)
-        GPIO.output(self.left_reverse_pin, GPIO.HIGH)
-        time.sleep(self.turn_time*self.friction_fudge_factor)
-        GPIO.output(self.right_forward_pin, GPIO.LOW)
-        GPIO.output(self.left_reverse_pin, GPIO.LOW)
-
-
-    def turn90CW(self):
 
         GPIO.output(self.left_forward_pin, GPIO.HIGH)
         GPIO.output(self.right_reverse_pin, GPIO.HIGH)
@@ -69,6 +61,15 @@ class Motor:
         GPIO.output(self.left_forward_pin, GPIO.LOW)
         GPIO.output(self.right_reverse_pin, GPIO.LOW)
 
+
+
+    def turn90CW(self):
+
+        GPIO.output(self.right_forward_pin, GPIO.HIGH)
+        GPIO.output(self.left_reverse_pin, GPIO.HIGH)
+        time.sleep(self.turn_time*self.friction_fudge_factor)
+        GPIO.output(self.right_forward_pin, GPIO.LOW)
+        GPIO.output(self.left_reverse_pin, GPIO.LOW)
 
 
 
