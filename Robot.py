@@ -70,7 +70,8 @@ class Robot:
         self.N_targets = len(self.target_positions)
 
         if self.MQTT_enable:
-            test_IR_read = self.comm.getLatestReadingIR()
+            test_IR_read = self.pollTargetServer()
+            print('test IR read: ', test_IR_read)
             assert len(test_IR_read)==self.N_targets, 'Number of targets ({}) returned from CommMQTT doesn\'t match N_targets ({}) '.format(len(test_IR_read), self.N_targets)
 
             self.current_target = 0
@@ -183,7 +184,7 @@ class Robot:
 
 
     def pollTargetServer(self):
-        return(self.comm.getLatestReadingIR())
+        return(self.comm.getLatestReadingIR()['IR_reading'])
 
 
     def doAction(self, action):

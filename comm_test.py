@@ -1,7 +1,7 @@
 from CommMQTT import CommMQTT
 import time
 
-comm = CommMQTT()
+comm = CommMQTT(broker_address='192.168.1.240')
 
 try:
     while True:

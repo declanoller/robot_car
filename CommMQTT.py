@@ -4,9 +4,9 @@ import json
 
 class CommMQTT:
 
-    def __init__(self):
+    def __init__(self, broker_address='localhost'):
 
-        self.broker_address = 'localhost'
+        self.broker_address = broker_address
         self.instance_name = 'RPi'
 
         print('Creating new instance ', self.instance_name)
@@ -27,11 +27,12 @@ class CommMQTT:
         print('Client loop started.')
 
     def on_message(self, client, userdata, message):
-        print('payload:',message.payload.decode("utf-8"))
-        m_in = json.loads(message.payload.decode("utf-8")) #decode json data
+        payload =  message.payload.decode("utf-8").strip('\n')
+        m_in = json.loads(payload) #decode json data
+        '''print('payload:', payload)
         print('dict:',m_in)
-        print('dict type:',type(m_in))
-        self.latest_reading_IR = message.payload.decode("utf-8")
+        print('dict type:',type(m_in))'''
+        self.latest_reading_IR = m_in
 
     def getLatestReadingIR(self):
         return(self.latest_reading_IR)
