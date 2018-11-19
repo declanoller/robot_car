@@ -486,7 +486,7 @@ class Robot:
             stdscr.addstr(2, 0,  info_str)
 
         if self.MQTT_enable:
-            IR_read = self.pollTargetServer()
+            IR_read = ' '.join(self.pollTargetServer())
             stdscr.addstr(4, 0,  IR_read)
 
         stdscr.addstr(curses.LINES - 1, 0,  'Press q or Esc to quit')
