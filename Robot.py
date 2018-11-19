@@ -428,30 +428,31 @@ class Robot:
         while True:
             c = stdscr.getch()
             if c == curses.KEY_LEFT:
+                self.doAction(2)
                 self.drawStandard(stdscr)
                 stdscr.addstr(move_str_pos[1], move_str_pos[0], 'Pressed Left key, turning CCW\n')
-                self.doAction(2)
+                stdscr.refresh() #Do this after addstr
 
 
             if c == curses.KEY_RIGHT:
+                self.doAction(3)
                 self.drawStandard(stdscr)
                 stdscr.addstr(move_str_pos[1], move_str_pos[0], 'Pressed Right key, turning CW\n')
                 stdscr.refresh() #Do this after addstr
-                self.doAction(3)
 
 
             if c == curses.KEY_UP:
+                self.doAction(0)
                 self.drawStandard(stdscr)
                 stdscr.addstr(move_str_pos[1], move_str_pos[0], 'Pressed Up key, going straight\n')
                 stdscr.refresh() #Do this after addstr
-                self.doAction(0)
 
 
             if c == curses.KEY_DOWN:
+                self.doAction(1)
                 self.drawStandard(stdscr)
                 stdscr.addstr(move_str_pos[1], move_str_pos[0], 'Pressed Down key, going backwards\n')
                 stdscr.refresh() #Do this after addstr
-                self.doAction(1)
 
 
             elif c == ord('q'):
