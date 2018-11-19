@@ -420,36 +420,39 @@ class Robot:
         delay_time = 0.2
         print(curses.LINES)
         print(curses.COLS)
+
+        move_str_pos = [0, int(curses.LINES/2)]
+
+        self.drawStandard(stdscr)
+
         while True:
             c = stdscr.getch()
             if c == curses.KEY_LEFT:
-                #stdscr.clear()
-                stdscr.erase() #Use this one supposedly https://stackoverflow.com/questions/9653688/how-to-refresh-curses-window-correctly
-                stdscr.addstr('Pressed Left key, turning CCW\n')
-                stdscr.refresh() #Do this after addstr
+                self.drawStandard(stdscr)
+                stdscr.addstr(move_str_pos[1], move_str_pos[0], 'Pressed Left key, turning CCW\n')
                 self.doAction(2)
-                time.sleep(delay_time)
+
 
             if c == curses.KEY_RIGHT:
-                stdscr.erase() #Use this one supposedly https://stackoverflow.com/questions/9653688/how-to-refresh-curses-window-correctly
-                stdscr.addstr('Pressed Right key, turning CW\n')
+                self.drawStandard(stdscr)
+                stdscr.addstr(move_str_pos[1], move_str_pos[0], 'Pressed Right key, turning CW\n')
                 stdscr.refresh() #Do this after addstr
                 self.doAction(3)
-                time.sleep(delay_time)
+
 
             if c == curses.KEY_UP:
-                stdscr.erase() #Use this one supposedly https://stackoverflow.com/questions/9653688/how-to-refresh-curses-window-correctly
-                stdscr.addstr('Pressed Up key, going straight\n')
+                self.drawStandard(stdscr)
+                stdscr.addstr(move_str_pos[1], move_str_pos[0], 'Pressed Up key, going straight\n')
                 stdscr.refresh() #Do this after addstr
                 self.doAction(0)
-                time.sleep(delay_time)
+
 
             if c == curses.KEY_DOWN:
-                stdscr.erase() #Use this one supposedly https://stackoverflow.com/questions/9653688/how-to-refresh-curses-window-correctly
-                stdscr.addstr('Pressed Down key, going backwards\n')
+                self.drawStandard(stdscr)
+                stdscr.addstr(move_str_pos[1], move_str_pos[0], 'Pressed Down key, going backwards\n')
                 stdscr.refresh() #Do this after addstr
                 self.doAction(1)
-                time.sleep(delay_time)
+
 
             elif c == ord('q'):
                 print('you pressed q! exiting')
@@ -463,6 +466,28 @@ class Robot:
 
 
 
+    def drawStandard(self, stdscr):
+        stdscr.erase()
+
+        if self.sonar_enable:
+            d1 = self.sonar_forward.distance()
+            d2 = self.sonar_left.distance()
+            d3 = self.sonar_right.distance()
+            info_str = 'Sonar meas: (straight = {:.2f}, left = {:.2f}, right = {:.2f})'.format(d1, d2, d3)
+            stdscr.addstr(0, 0,  info_str)
+
+        if self.compass_enable:
+            compass_reading = self.compass.getCompassDirection() #From now on, the function will prepare and scale everything.
+            info_str = 'Compass meas: ({:.2f})'.format(compass_reading)
+            stdscr.addstr(2, 0,  info_str)
+
+        if self.MQTT_enable:
+            IR_read = self.pollTargetServer()
+            stdscr.addstr(4, 0,  IR_read)
+
+        stdscr.addstr(curses.LINES - 1, 0,  'Press q or Esc to quit')
+
+        stdscr.refresh() #Do this after addstr
 
 
     ############ Bookkeeping functions
