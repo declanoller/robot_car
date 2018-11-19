@@ -15,7 +15,7 @@ import curses
 
 class Robot:
 
-    def __init__(self, motor_enable=True, sonar_enable=True, compass_enable=True, **kwargs):
+    def __init__(self, motor_enable=True, sonar_enable=True, compass_enable=True, IR_target_enable=True, **kwargs):
 
 
         #GPIO Mode (BOARD / BCM)
