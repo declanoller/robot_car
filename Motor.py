@@ -13,8 +13,10 @@ class Motor:
         self.right_forward_pin = right_forward_pin
         self.right_reverse_pin = right_reverse_pin
 
+        # A higher number here makes it turn for LONGER.
         carpet = 0.3
-        self.friction_fudge_factor = carpet
+        concrete = 0.2
+        self.friction_fudge_factor = concrete
         self.turn_time = 1.0
         self.straight_travel_time = 1.0
 
