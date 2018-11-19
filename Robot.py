@@ -15,7 +15,7 @@ import curses
 
 class Robot:
 
-    def __init__(self, motor_enable=True, sonar_enable=True, compass_enable=True, IR_target_enable=True, **kwargs):
+    def __init__(self, motor_enable=True, sonar_enable=True, compass_enable=True, MQTT_enable=True, **kwargs):
 
 
         #GPIO Mode (BOARD / BCM)
@@ -26,6 +26,7 @@ class Robot:
         self.motor_enable = motor_enable
         self.sonar_enable = sonar_enable
         self.compass_enable = compass_enable
+        self.MQTT_enable = MQTT_enable
 
         if self.motor_enable:
             self.motor = Motor(left_forward_pin=31, left_reverse_pin=33, right_forward_pin=35, right_reverse_pin=37)
@@ -68,10 +69,11 @@ class Robot:
         self.target_positions = np.array([[.19, 0], [.55, 0], [wall_length, .21], [wall_length, .65], [.97, wall_length], [.58, wall_length], [0, 1.02], [0, .60]])
         self.N_targets = len(self.target_positions)
 
-        test_IR_read = self.comm.getLatestReadingIR()
-        assert len(test_IR_read)==self.N_targets, 'Number of targets ({}) returned from CommMQTT doesn\'t match N_targets ({}) '.format(len(test_IR_read), self.N_targets)
+        if self.MQTT_enable:
+            test_IR_read = self.comm.getLatestReadingIR()
+            assert len(test_IR_read)==self.N_targets, 'Number of targets ({}) returned from CommMQTT doesn\'t match N_targets ({}) '.format(len(test_IR_read), self.N_targets)
 
-        self.current_target = 0
+            self.current_target = 0
 
 
 
