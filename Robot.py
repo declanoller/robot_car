@@ -42,7 +42,7 @@ class Robot:
             print('Compass object created.')
         if self.MQTT_enable:
             #Compass uses I2C pins, which are 3 (SDA) and 5 (SCL) for the RPi 3.
-            self.comm = CommMQTT()
+            self.comm = CommMQTT(broker_address='192.168.1.240')
             print('CommMQTT object created.')
 
 
