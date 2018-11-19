@@ -3,7 +3,7 @@ from Robot import Robot
 
 
 
-rob = Robot(motor_enable=True, sonar_enable=False, compass_enable=False, MQTT_enable=False)
+rob = Robot(motor_enable=True, sonar_enable=True, compass_enable=False, MQTT_enable=False)
 
 rob.directControl()
 
