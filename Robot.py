@@ -63,11 +63,14 @@ class Robot:
         self.target_draw_rad = self.robot_draw_rad
 
         #These will be the positions in meters, where (0,0) is the center of the arena.
-        self.target_positions = [(-0.5, -0.5), (0.5, 0.5)]
+        wall_length = 1.25
+        #This is in terms of x and y, from the bottom left corner.
+        self.target_positions = np.array([[.19, 0], [.55, 0], [wall_length, .21], [wall_length, .65], [.97, wall_length], [.58, wall_length], [0, 1.02], [0, .60]])
         self.N_targets = len(self.target_positions)
 
         test_IR_read = self.comm.getLatestReadingIR()
         assert len(test_IR_read)==self.N_targets, 'Number of targets ({}) returned from CommMQTT doesn\'t match N_targets ({}) '.format(len(test_IR_read), self.N_targets)
+
         self.current_target = 0
 
 
@@ -174,6 +177,7 @@ class Robot:
     def resetTarget(self):
         other_sensors = [i for i in range(self.N_targets) if i!=self.current_target]
         self.current_target = random.choice(other_sensors)
+        self.current_target_pos = self.target_positions[self.current_target]
 
 
     def pollTargetServer(self):
@@ -409,28 +413,39 @@ class Robot:
 
 
     def DCloop(self, stdscr):
-
+        #https://docs.python.org/3/howto/curses.html
+        #https://docs.python.org/3/library/curses.html#curses.window.clrtobot
         delay_time = 0.2
-
+        print(curses.LINES)
+        print(curses.COLS)
         while True:
             c = stdscr.getch()
             if c == curses.KEY_LEFT:
+                #stdscr.clear()
+                stdscr.erase() #Use this one supposedly https://stackoverflow.com/questions/9653688/how-to-refresh-curses-window-correctly
                 stdscr.addstr('Pressed Left key, turning CCW\n')
+                stdscr.refresh() #Do this after addstr
                 self.doAction(2)
                 time.sleep(delay_time)
 
             if c == curses.KEY_RIGHT:
+                stdscr.erase() #Use this one supposedly https://stackoverflow.com/questions/9653688/how-to-refresh-curses-window-correctly
                 stdscr.addstr('Pressed Right key, turning CW\n')
+                stdscr.refresh() #Do this after addstr
                 self.doAction(3)
                 time.sleep(delay_time)
 
             if c == curses.KEY_UP:
+                stdscr.erase() #Use this one supposedly https://stackoverflow.com/questions/9653688/how-to-refresh-curses-window-correctly
                 stdscr.addstr('Pressed Up key, going straight\n')
+                stdscr.refresh() #Do this after addstr
                 self.doAction(0)
                 time.sleep(delay_time)
 
             if c == curses.KEY_DOWN:
+                stdscr.erase() #Use this one supposedly https://stackoverflow.com/questions/9653688/how-to-refresh-curses-window-correctly
                 stdscr.addstr('Pressed Down key, going backwards\n')
+                stdscr.refresh() #Do this after addstr
                 self.doAction(1)
                 time.sleep(delay_time)
 
