@@ -184,7 +184,8 @@ class Robot:
 
 
     def pollTargetServer(self):
-        return(self.comm.getLatestReadingIR()['IR_reading'])
+        #return(self.comm.getLatestReadingIR()['IR_reading'])
+        return(self.comm.getLatestReadingIR())
 
 
     def doAction(self, action):
