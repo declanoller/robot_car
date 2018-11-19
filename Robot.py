@@ -1,4 +1,4 @@
-calculatePositionimport time
+import time
 import RPi.GPIO as GPIO
 from Motor import Motor
 from Sonar import Sonar
