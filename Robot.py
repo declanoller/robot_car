@@ -56,7 +56,7 @@ class Robot:
 
         #Here, the 4 actions will be, in order: forward (F), backward (B), CCW, clockwise turn (CW)
         self.N_actions = 4
-        self.arena_side = 1.0
+        self.arena_side = 1.25
         self.xlims = np.array([-0.5,0.5])
         self.ylims = np.array([-0.5,0.5])
         self.lims = np.array((self.xlims,self.ylims))
@@ -391,10 +391,10 @@ class Robot:
         compass_reading = self.compass.getCompassDirection() #From now on, the function will prepare and scale everything.
 
         position = self.calculatePosition(d1, d2, d3, compass_reading)
-        self.position = position
+        self.position = np.array(position)
         self.angle = compass_reading
 
-        return(position, compass_reading)
+        return(self.position, compass_reading)
 
     ################# Functions for interacting directly with the robot.
 
@@ -469,6 +469,17 @@ class Robot:
         print('exited curses loop.')
 
 
+    def redrawBox(self, stdscr, box_info, pos):
+        side_symbol = '-'
+        (box_coord_y, box_coord_x, box_side_y, box_side_x) = box_info
+        stdscr.addstr(box_coord_y - 1, box_coord_x, side_symbol*box_side_x)
+        stdscr.addstr(box_coord_y + box_side_y, box_coord_x, side_symbol*box_side_x)
+        for i in range(box_side_y+1):
+            stdscr.addstr(box_coord_y + i, box_coord_x - 1, '|')
+            stdscr.addstr(box_coord_y + i, box_coord_x + box_side_x, '|')
+
+        stdscr.addstr(box_coord_y + pos[1], box_coord_x - pos[0], 'o')
+
 
     def drawStandard(self, stdscr):
         stdscr.erase()
@@ -484,6 +495,24 @@ class Robot:
             compass_reading = self.compass.getCompassDirection() #From now on, the function will prepare and scale everything.
             info_str = 'Compass meas: ({:.2f})'.format(compass_reading)
             stdscr.addstr(2, 0,  info_str)
+
+
+        if self.sonar_enable and self.compass_enable:
+            #Draw box, with best position guess
+            box_side_y = 10
+            box_side_x = 10
+            box_coord_y = 2
+            box_coord_x = 15
+
+            # getPosition should return the position, where (0,0) is the center of
+            # the arena. box_pos is the integer pair for the drawn box indices.
+            raw_pos = self.getPosition()
+
+            box_px_width = (self.arena_side/box_side_x)
+            box_pos = ((raw_pos + (self.arena_side/2))/box_px_width).astype('int')
+
+            box_info = (box_coord_y, box_coord_x, box_side_y, box_side_x)
+            self.redrawBox(stdscr, box_info, box_pos):
 
         if self.MQTT_enable:
             IR_read = ' '.join(self.pollTargetServer())
