@@ -5,12 +5,13 @@ import time
 import matplotlib.pyplot as plt
 import numpy as np
 import FileSystemTools as fst
+from math import pi
 
 class Compass:
 
-	def __init__(self):
+	def __init__(self, compass_correction=None):
 
-		self.SETTINGS_FILE = 'CALIBRATED_RTIMULib'
+		self.SETTINGS_FILE = 'BASEMENT_CAL_RTIMULib'
 		self.s = RTIMU.Settings(self.SETTINGS_FILE)
 		self.imu = RTIMU.RTIMU(self.s)
 
@@ -28,6 +29,18 @@ class Compass:
 		self.poll_interval = self.imu.IMUGetPollInterval()
 		print('poll interval: ', self.poll_interval)
 
+		self.compass_correction = compass_correction
+
+		# Pass compass_correction as a dict with "meas" being the ones you measured
+		# and "ideal" being the ideal ones, and it will take care of the rest. They both
+		# have to be np arrays.
+
+		if self.compass_correction is not None:
+
+			diff = self.compass_correction['ideal_angles'] - self.compass_correction['meas_angles']
+			self.correction_interp = interp1d(self.compass_correction['meas_angles'], diff, kind='cubic')
+
+
 
 	def getReading(self):
 
@@ -38,6 +51,10 @@ class Compass:
 					data = self.imu.getIMUData()
 
 					fusion_pose = data['fusionPose']
+
+					if self.compass_correction is not None:
+						fusion_pose[2] += self.correction_interp(fusion_pose[2])
+						fusion_pose[2] = pi - fusion_pose[2]
 
 					time.sleep(self.poll_interval*1.0/1000.0)
 					return(fusion_pose)

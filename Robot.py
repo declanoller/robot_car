@@ -38,8 +38,12 @@ class Robot:
             print('Sonar objects created.')
         if self.compass_enable:
             #Compass uses I2C pins, which are 3 (SDA) and 5 (SCL) for the RPi 3.
-            self.compass = Compass()
+            compass_correction = {}
+            compass_correction['ideal_angles'] = np.array([pi, pi*3/4, pi*2/4, pi*1/4, pi*0/4, -pi*1/4, -pi*2/4, -pi*3/4, -pi])
+            compass_correction['meas_angles'] = np.array([pi, 2.47, 1.85, 1.16, 0.35, -0.57, -1.69, -2.46, -pi])
+            self.compass = Compass(compass_correction)
             print('Compass object created.')
+
         if self.MQTT_enable:
             #Compass uses I2C pins, which are 3 (SDA) and 5 (SCL) for the RPi 3.
             self.comm = CommMQTT(broker_address='192.168.1.240')
@@ -275,13 +279,13 @@ class Robot:
         pair23 = [d2, theta + pi/2, d3, theta - pi/2]
         pair13 = [d1, theta, d3, theta - pi/2]
 
-        pair12_same = touchingSameWall(*pair12)
-        pair23_same = touchingSameWall(*pair23)
-        pair13_same = touchingSameWall(*pair13)
+        pair12_same = self.touchingSameWall(*pair12)
+        pair23_same = self.touchingSameWall(*pair23)
+        pair13_same = self.touchingSameWall(*pair13)
 
-        pair12_opp = touchingOppWall(*pair12)
-        pair23_opp = touchingOppWall(*pair23)
-        pair13_opp = touchingOppWall(*pair13)
+        pair12_opp = self.touchingOppWall(*pair12)
+        pair23_opp = self.touchingOppWall(*pair23)
+        pair13_opp = self.touchingOppWall(*pair13)
 
         sol = {}
         same = (pair12_same is not None) or (pair23_same is not None) or (pair13_same is not None)
@@ -379,6 +383,12 @@ class Robot:
             sol[other_coord] = (-below_margin + (1 - above_margin))/2.0
             return(sol[0], sol[1])
 
+        # This is if something is wrong and it can't figure out the position.
+        return(0, 0)
+
+
+    def compassCorrection()
+
 
     def getPosition(self):
 
@@ -424,7 +434,7 @@ class Robot:
         print(curses.LINES)
         print(curses.COLS)
 
-        move_str_pos = [0, int(curses.LINES/2)]
+        move_str_pos = [0, 6]
 
         self.drawStandard(stdscr)
 
@@ -433,34 +443,38 @@ class Robot:
             if c == curses.KEY_LEFT:
                 self.doAction(2)
                 self.drawStandard(stdscr)
-                stdscr.addstr(move_str_pos[1], move_str_pos[0], 'Pressed Left key, turning CCW\n')
-                stdscr.refresh() #Do this after addstr
+                stdscr.addstr(move_str_pos[1], move_str_pos[0], 'Pressed Left key, turning CCW')
+                self.moveCursorRefresh(stdscr)
 
 
             if c == curses.KEY_RIGHT:
                 self.doAction(3)
                 self.drawStandard(stdscr)
-                stdscr.addstr(move_str_pos[1], move_str_pos[0], 'Pressed Right key, turning CW\n')
-                stdscr.refresh() #Do this after addstr
+                stdscr.addstr(move_str_pos[1], move_str_pos[0], 'Pressed Right key, turning CW')
+                self.moveCursorRefresh(stdscr)
 
 
             if c == curses.KEY_UP:
                 self.doAction(0)
                 self.drawStandard(stdscr)
-                stdscr.addstr(move_str_pos[1], move_str_pos[0], 'Pressed Up key, going straight\n')
-                stdscr.refresh() #Do this after addstr
+                stdscr.addstr(move_str_pos[1], move_str_pos[0], 'Pressed Up key, going straight')
+                self.moveCursorRefresh(stdscr)
 
 
             if c == curses.KEY_DOWN:
                 self.doAction(1)
                 self.drawStandard(stdscr)
-                stdscr.addstr(move_str_pos[1], move_str_pos[0], 'Pressed Down key, going backwards\n')
-                stdscr.refresh() #Do this after addstr
+                stdscr.addstr(move_str_pos[1], move_str_pos[0], 'Pressed Down key, going backwards')
+                self.moveCursorRefresh(stdscr)
 
 
             elif c == ord('q'):
                 print('you pressed q! exiting')
                 break  # Exit the while loop
+
+    def moveCursorRefresh(self, stdscr):
+        stdscr.move(curses.LINES - 1, curses.COLS - 1)
+        stdscr.refresh() #Do this after addstr
 
 
     def directControl(self):
@@ -474,11 +488,14 @@ class Robot:
         (box_coord_y, box_coord_x, box_side_y, box_side_x) = box_info
         stdscr.addstr(box_coord_y - 1, box_coord_x, side_symbol*box_side_x)
         stdscr.addstr(box_coord_y + box_side_y, box_coord_x, side_symbol*box_side_x)
-        for i in range(box_side_y+1):
+        stdscr.addstr(box_coord_y + box_side_y + 1, box_coord_x - 12, '(-0.62, -0.62)')
+        stdscr.addstr(box_coord_y - 1, box_coord_x + box_side_x + 1, '(0.625, 0.625)')
+
+        for i in range(box_side_y):
             stdscr.addstr(box_coord_y + i, box_coord_x - 1, '|')
             stdscr.addstr(box_coord_y + i, box_coord_x + box_side_x, '|')
 
-        stdscr.addstr(box_coord_y + pos[1], box_coord_x - pos[0], 'o')
+        stdscr.addstr(box_coord_y + pos[1], box_coord_x + pos[0], 'o')
 
 
     def drawStandard(self, stdscr):
@@ -501,21 +518,24 @@ class Robot:
             #Draw box, with best position guess
             box_side_y = 10
             box_side_x = 10
-            box_coord_y = 2
-            box_coord_x = 15
+            box_coord_y = 9
+            box_coord_x = 45
 
             # getPosition should return the position, where (0,0) is the center of
             # the arena. box_pos is the integer pair for the drawn box indices.
-            raw_pos = self.getPosition()
+            raw_pos = self.getPosition()[0]
 
             box_px_width = (self.arena_side/box_side_x)
-            box_pos = ((raw_pos + (self.arena_side/2))/box_px_width).astype('int')
+            try:
+                box_pos = ((raw_pos + (self.arena_side/2))/box_px_width).astype('int')
+            except:
+                box_pos = [0,0]
 
             box_info = (box_coord_y, box_coord_x, box_side_y, box_side_x)
-            self.redrawBox(stdscr, box_info, box_pos):
+            self.redrawBox(stdscr, box_info, box_pos)
 
         if self.MQTT_enable:
-            IR_read = ' '.join(self.pollTargetServer())
+            IR_read = 'IR target reading:  ' + ' '.join(self.pollTargetServer())
             stdscr.addstr(4, 0,  IR_read)
 
         stdscr.addstr(curses.LINES - 1, 0,  'Press q or Esc to quit')
