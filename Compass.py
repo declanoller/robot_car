@@ -36,7 +36,7 @@ class Compass:
 		# have to be np arrays.
 
 		if self.compass_correction is not None:
-
+			print('applying compass correction from supplied data.')
 			diff = self.compass_correction['ideal_angles'] - self.compass_correction['meas_angles']
 			self.correction_interp = interp1d(self.compass_correction['meas_angles'], diff, kind='cubic')
 
