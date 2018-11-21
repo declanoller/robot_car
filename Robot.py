@@ -10,6 +10,7 @@ from random import randint, random, sample, choice
 import numpy as np
 from math import sin, cos, tan, pi
 
+import threading
 import curses
 
 
@@ -41,8 +42,15 @@ class Robot:
             compass_correction = {}
             compass_correction['ideal_angles'] = np.array([pi, pi*3/4, pi*2/4, pi*1/4, pi*0/4, -pi*1/4, -pi*2/4, -pi*3/4, -pi])
             compass_correction['meas_angles'] = np.array([pi, 2.47, 1.85, 1.16, 0.35, -0.57, -1.69, -2.46, -pi])
+
             self.compass = Compass(compass_correction)
             print('Compass object created.')
+
+            print('starting compass read loop...')
+            # Using daemon=True will cause this thread to die when the main program dies.
+            self.compass_read_thread = threading.Thread(target=self.compass.readCompassLoop(test_time='forever'), daemon=True)
+            print('started.')
+
 
         if self.MQTT_enable:
             #Compass uses I2C pins, which are 3 (SDA) and 5 (SCL) for the RPi 3.
@@ -387,9 +395,6 @@ class Robot:
         return(0, 0)
 
 
-    def compassCorrection()
-
-
     def getPosition(self):
 
         assert self.sonar_enable, 'No sonar! exiting.'
@@ -430,7 +435,7 @@ class Robot:
     def DCloop(self, stdscr):
         #https://docs.python.org/3/howto/curses.html
         #https://docs.python.org/3/library/curses.html#curses.window.clrtobot
-        delay_time = 0.2
+        delay_time = 0.5
         print(curses.LINES)
         print(curses.COLS)
 
@@ -440,8 +445,12 @@ class Robot:
 
         while True:
             c = stdscr.getch()
+
+            #compass_reading = self.compass.getCompassDirection()
+
             if c == curses.KEY_LEFT:
                 self.doAction(2)
+                time.sleep(delay_time)
                 self.drawStandard(stdscr)
                 stdscr.addstr(move_str_pos[1], move_str_pos[0], 'Pressed Left key, turning CCW')
                 self.moveCursorRefresh(stdscr)
@@ -449,6 +458,7 @@ class Robot:
 
             if c == curses.KEY_RIGHT:
                 self.doAction(3)
+                time.sleep(delay_time)
                 self.drawStandard(stdscr)
                 stdscr.addstr(move_str_pos[1], move_str_pos[0], 'Pressed Right key, turning CW')
                 self.moveCursorRefresh(stdscr)
@@ -456,6 +466,7 @@ class Robot:
 
             if c == curses.KEY_UP:
                 self.doAction(0)
+                time.sleep(delay_time)
                 self.drawStandard(stdscr)
                 stdscr.addstr(move_str_pos[1], move_str_pos[0], 'Pressed Up key, going straight')
                 self.moveCursorRefresh(stdscr)
@@ -463,6 +474,7 @@ class Robot:
 
             if c == curses.KEY_DOWN:
                 self.doAction(1)
+                time.sleep(delay_time)
                 self.drawStandard(stdscr)
                 stdscr.addstr(move_str_pos[1], move_str_pos[0], 'Pressed Down key, going backwards')
                 self.moveCursorRefresh(stdscr)
@@ -528,6 +540,8 @@ class Robot:
             box_px_width = (self.arena_side/box_side_x)
             try:
                 box_pos = ((raw_pos + (self.arena_side/2))/box_px_width).astype('int')
+                box_pos[0] = min(box_side_x, max(0, box_pos[0]))
+                box_pos[1] = min(box_side_y, max(0, box_pos[1]))
             except:
                 box_pos = [0,0]
 

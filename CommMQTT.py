@@ -9,7 +9,7 @@ class CommMQTT:
         self.broker_address = broker_address
         self.instance_name = 'RPi'
 
-        print('Creating new instance ', self.instance_name)
+        print('\nCreating new instance ', self.instance_name)
         self.client = mqtt.Client(self.instance_name) #create new instance
 
         print('Connecting to broker...')
