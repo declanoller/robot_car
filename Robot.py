@@ -90,6 +90,7 @@ class Robot:
         self.wall_length = 1.25
         self.xlims = np.array([-self.wall_length/2, self.wall_length/2])
         self.ylims = np.array([-self.wall_length/2, self.wall_length/2])
+        self.position = np.array([0.5*(max(self.xlims) + min(self.xlims)), 0.5*(max(self.ylims) + min(self.ylims))])
         self.bottom_corner = np.array([self.xlims[0], self.ylims[0]])
         self.lims = np.array((self.xlims,self.ylims))
         self.robot_draw_rad = self.wall_length/20.0
@@ -114,6 +115,7 @@ class Robot:
         # This determines the order of the action indices (i.e., 0 is straight, 1 is backward, etc)
         self.action_func_list = [self.motor.goStraight, self.motor.goBackward, self.motor.turn90CCW, self.motor.turn90CW]
 
+        self.resetStateValues()
 
 
     ########### Functions that the Agent class expects.
@@ -162,9 +164,9 @@ class Robot:
 
     def resetStateValues(self):
 
-        self.pos, self.angle = self.getPosition()
+        self.position, self.angle = self.getPosition()
 
-        self.pos_hist = np.array([self.pos])
+        self.pos_hist = np.array([self.position])
         self.angle_hist = np.array([self.angle])
         self.action_hist = [0]
         self.t = [0]
@@ -181,10 +183,10 @@ class Robot:
         ax.set_ylabel('y')
         ax.set_aspect('equal')
 
-        puck = plt.Circle(tuple(self.pos), self.robot_draw_rad, color='tomato')
+        puck = plt.Circle(tuple(self.position), self.robot_draw_rad, color='tomato')
         ax.add_artist(puck)
 
-        if self.target is not None:
+        if self.current_target is not None:
             target = plt.Circle(tuple(self.target_positions[self.current_target]), self.target_draw_rad, color='seagreen')
             ax.add_artist(target)
 
