@@ -6,6 +6,8 @@ class Sonar:
 
     def __init__(self, GPIO_TRIGGER=10, GPIO_ECHO=8):
 
+        # From now on the distance is returned in units of METERS.
+
         GPIO.setmode(GPIO.BOARD)
 
         self.GPIO_TRIGGER = GPIO_TRIGGER
@@ -42,7 +44,7 @@ class Sonar:
         # and divide by 2, because there and back
         distance = (TimeElapsed * 34300) / 2
 
-        return(distance)
+        return(distance/100.0)
 
 
     def distanceTestLoop(self, test_time=10):

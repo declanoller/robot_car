@@ -10,54 +10,55 @@ def getDateString():
 
 
 def makeDir(dir_name):
-	#Even if this is in a library dir, it should make the dir
-	#in the script that called it.
+	# Even if this is in a library dir, it should make the dir
+	# in the script that called it.
 	mkdir(dir_name)
 	return(dir_name)
 
 
 def makeDateDir():
-	#Just creates a dir with the current date for its name
+	# Just creates a dir with the current date for its name
 	ds = getDateString()
 	makeDir(ds)
 	return(ds)
 
 
 def makeLabelDateDir(label):
-	#You give it a label, and it creates the dir label_datestring
+	# You give it a label, and it creates the dir label_datestring
 	dir = label + '_' + getDateString()
 	makeDir(dir)
 	return(dir)
 
 
-def combineDirAndFile(dir,file):
+def combineDirAndFile(dir, file):
+	# Adds the file to the end of dir, adding a slash in between if needed.
+	return(addTrailingSlashIfNeeded(dir) + file)
 
-	if dir[-1] == '/':
-		return(dir + file)
-	else:
-		return(dir + '/' + file)
+
+def dictToStringList(dict):
+	pd_copy = copy(dict)
+	for k,v in pd_copy.items():
+		if type(v).__name__ == 'float':
+			if abs(v)>10**-4:
+				pd_copy[k] = '{:.5f}'.format(v)
+			else:
+				pd_copy[k] = '{:.2E}'.format(v)
+
+	params = [str(k)+'='+str(v) for k,v in pd_copy.items() if v is not None]
+	return(params)
+
 
 
 def paramDictToFnameStr(param_dict):
-	#Creates a string that can be used as an fname, separated by
-	#underscores. If a param has the value None, it isn't included.
-	pd_copy = copy(param_dict)
-	for k,v in pd_copy.items():
-		if type(v).__name__ == 'float':
-			pd_copy[k] = '{:.2f}'.format(v)
-
-	params = [str(k)+'='+str(v) for k,v in pd_copy.items() if v is not None]
+	# Creates a string that can be used as an fname, separated by
+	# underscores. If a param has the value None, it isn't included.
+	params = dictToStringList(param_dict)
 	return('_'.join(params))
 
 def paramDictToLabelStr(param_dict):
-	#Creates a string that can be used as an fname, separated by
-	#', '. If a param has the value None, it isn't included.
-	pd_copy = copy(param_dict)
-	for k,v in pd_copy.items():
-		if type(v).__name__ == 'float':
-			pd_copy[k] = '{:.2f}'.format(v)
-
-	params = [str(k)+'='+str(v) for k,v in pd_copy.items() if v is not None]
+	# Creates a string that can be used as an fname, separated by
+	# ', '. If a param has the value None, it isn't included.
+	params = dictToStringList(param_dict)
 	return(', '.join(params))
 
 
@@ -117,11 +118,18 @@ def getTimeDiffStr(start_time):
 	return(strfdelta(diff,'{hours} hrs, {minutes} mins, {seconds} s'))
 
 
-def writeDictToFile(my_dict,fname):
-
+def writeDictToFile(dict,fname):
+	# You have to copy it here, otherwise it'll actually overwrite the values in the dict
+	# you passed.
+	my_dict = copy(dict)
 	f = open(fname,'w+')
 	for k,v in my_dict.items():
-		f.write('{} = {}\n'.format(k,v))
+		if type(v).__name__ == 'float':
+			if abs(v)>10**-4:
+				my_dict[k] = '{:.5f}'.format(v)
+			else:
+				my_dict[k] = '{:.2E}'.format(v)
+		f.write('{} = {}\n'.format(k, my_dict[k]))
 
 	f.close()
 
@@ -146,7 +154,8 @@ def readFileToDict(fname):
 
 
 def dirFromFullPath(fname):
-
+	# This gives you the path, stripping the local filename, if you pass it
+	# a long path + filename.
 	parts = fname.split('/')
 	last_part = parts[-1]
 	path = fname.replace(last_part,'')
@@ -157,6 +166,7 @@ def dirFromFullPath(fname):
 
 
 def fnameFromFullPath(fname):
+	# This just gets the local filename if you passed it some huge long name with the path.
 	parts = fname.split('/')
 	last_part = parts[-1]
 	return(last_part)

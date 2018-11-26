@@ -4,6 +4,7 @@ from Motor import Motor
 from Sonar import Sonar
 from Compass import Compass
 from CommMQTT import CommMQTT
+from DebugFile import DebugFile
 
 import matplotlib.pyplot as plt
 from random import randint, random, sample, choice
@@ -23,20 +24,30 @@ class Robot:
         GPIO.cleanup()
         GPIO.setmode(GPIO.BOARD)
 
+        self.df = DebugFile(notes='figuring out freezing problem')
+
+        self.df.writeToDebug('************************* In function: {}()'.format('init'))
 
         self.motor_enable = motor_enable
         self.sonar_enable = sonar_enable
         self.compass_enable = compass_enable
         self.MQTT_enable = MQTT_enable
 
+        self.df.writeToDebug('motor enable: {}'.format(self.motor_enable))
+        self.df.writeToDebug('sonar enable: {}'.format(self.sonar_enable))
+        self.df.writeToDebug('compass enable: {}'.format(self.compass_enable))
+        self.df.writeToDebug('MQTT enable: {}'.format(self.MQTT_enable))
+
         if self.motor_enable:
             self.motor = Motor(left_forward_pin=31, left_reverse_pin=33, right_forward_pin=35, right_reverse_pin=37)
             print('Motor object created.')
+
         if self.sonar_enable:
             self.sonar_forward = Sonar(GPIO_TRIGGER=10, GPIO_ECHO=8)
             self.sonar_left = Sonar(GPIO_TRIGGER=24, GPIO_ECHO=22)
             self.sonar_right = Sonar(GPIO_TRIGGER=18, GPIO_ECHO=16)
             print('Sonar objects created.')
+
         if self.compass_enable:
             #Compass uses I2C pins, which are 3 (SDA) and 5 (SCL) for the RPi 3.
             compass_correction = {}
@@ -46,16 +57,24 @@ class Robot:
             self.compass = Compass(compass_correction)
             print('Compass object created.')
 
-            print('starting compass read loop...')
             # Using daemon=True will cause this thread to die when the main program dies.
-            self.compass_read_thread = threading.Thread(target=self.compass.readCompassLoop(test_time='forever'), daemon=True)
+            print('creating compass read loop thread...')
+            self.df.writeToDebug('creating compass read loop thread...')
+            self.compass_read_thread = threading.Thread(target=self.compass.readCompassLoop, kwargs={'test_time':'forever', }, daemon=True)
+            print('starting compass read loop thread...')
+            self.df.writeToDebug('starting compass read loop thread...')
+            self.compass_read_thread.start()
             print('started.')
+            self.df.writeToDebug('started.')
+
+
 
 
         if self.MQTT_enable:
             #Compass uses I2C pins, which are 3 (SDA) and 5 (SCL) for the RPi 3.
             self.comm = CommMQTT(broker_address='192.168.1.240')
             print('CommMQTT object created.')
+            self.df.writeToDebug('CommMQTT object created.')
 
 
         self.N_state_terms = 6
@@ -68,17 +87,20 @@ class Robot:
 
         #Here, the 4 actions will be, in order: forward (F), backward (B), CCW, clockwise turn (CW)
         self.N_actions = 4
-        self.arena_side = 1.25
-        self.xlims = np.array([-0.5,0.5])
-        self.ylims = np.array([-0.5,0.5])
+        self.wall_length = 1.25
+        self.xlims = np.array([-self.wall_length/2, self.wall_length/2])
+        self.ylims = np.array([-self.wall_length/2, self.wall_length/2])
+        self.bottom_corner = np.array([self.xlims[0], self.ylims[0]])
         self.lims = np.array((self.xlims,self.ylims))
-        self.robot_draw_rad = self.arena_side/20.0
+        self.robot_draw_rad = self.wall_length/20.0
         self.target_draw_rad = self.robot_draw_rad
 
+        self.dist_meas_percent_tolerance = 0.2
+
         #These will be the positions in meters, where (0,0) is the center of the arena.
-        wall_length = 1.25
+
         #This is in terms of x and y, from the bottom left corner.
-        self.target_positions = np.array([[.19, 0], [.55, 0], [wall_length, .21], [wall_length, .65], [.97, wall_length], [.58, wall_length], [0, 1.02], [0, .60]])
+        self.target_positions = np.array([[.19, 0], [.55, 0], [self.wall_length, .21], [self.wall_length, .65], [.97, self.wall_length], [.58, self.wall_length], [0, 1.02], [0, .60]])
         self.N_targets = len(self.target_positions)
 
         if self.MQTT_enable:
@@ -88,6 +110,9 @@ class Robot:
             assert len(test_IR_read)==self.N_targets, 'Number of targets ({}) returned from CommMQTT doesn\'t match N_targets ({}) '.format(len(test_IR_read), self.N_targets)
 
             self.current_target = 0
+
+        # This determines the order of the action indices (i.e., 0 is straight, 1 is backward, etc)
+        self.action_func_list = [self.motor.goStraight, self.motor.goBackward, self.motor.turn90CCW, self.motor.turn90CW]
 
 
 
@@ -198,41 +223,30 @@ class Robot:
 
     def pollTargetServer(self):
         return(self.comm.getLatestReadingIR()['IR_reading'].split())
-        #return(self.comm.getLatestReadingIR())
 
 
     def doAction(self, action):
-
         assert self.motor_enable, 'Motor not enabled! crashing.'
-
-        #Here, the 4 actions will be, in order: forward (F), backward (B), CCW, clockwise turn (CW)
-        if action==0:
-            self.motor.goStraight()
-        elif action==1:
-            self.motor.goBackward()
-        elif action==2:
-            self.motor.turn90CCW()
-        elif action==3:
-            self.motor.turn90CW()
+        # Here, the 4 actions will be, in order: forward (F), backward (B), CCW, clockwise turn (CW)
+        self.action_func_list[action]()
 
 
     def touchingSameWall(self, a, a_theta, b, b_theta):
         #This tests if two vectors are touching the same wall, i.e, either of their coords are the same.
         #If any are, then it returns the coord and the index of it. Otherwise, returns None.
         #a and b are their magnitudes, the thetas are their angle w.r.t. the right-pointing horizontal.
-        percent_tolerance = 0.02
 
         #x
         x1 = a*cos(a_theta)
         x2 = b*cos(b_theta)
         #print('x1={:.4f}, x2={:.4f}, norm diff={}'.format(x1,x2, abs((x1 - x2)/(0.5*(x1 + x2)))))
-        if abs((x1 - x2)/(0.5*(x1 + x2))) < percent_tolerance:
+        if abs((x1 - x2)/(0.5*(x1 + x2))) < self.dist_meas_percent_tolerance:
             return(x1, 0)
 
         #y
         y1 = a*sin(a_theta)
         y2 = b*sin(b_theta)
-        if abs((y1 - y2)/(0.5*(y1 + y2))) < percent_tolerance:
+        if abs((y1 - y2)/(0.5*(y1 + y2))) < self.dist_meas_percent_tolerance:
             return(y1, 1)
 
         return(None)
@@ -242,37 +256,48 @@ class Robot:
         #Returns index of two that are touching opp walls, None otherwise.
         #Also returns the coordinate we're sure about now, which is the negative of the
         #negative of the pair that makes up the span.
-        percent_tolerance = 0.02
 
         #x
         x1 = a*cos(a_theta)
         x2 = b*cos(b_theta)
         span = abs(x1 - x2)
-        wall_dist = 1.0
         #print('span x={}'.format(span))
-        if abs((span - wall_dist)/(0.5*(span + wall_dist))) < percent_tolerance:
+        #if abs((span - self.wall_length)/(0.5*(span + self.wall_length))) < self.dist_meas_percent_tolerance:
+        span_accuracy = abs((span - self.wall_length)/self.wall_length)
+        if span_accuracy < self.dist_meas_percent_tolerance:
+            # This current way of doing it anchors it to the LEFT/DOWN, so it will always have that bias.
+            # Instead let's try taking the average.
             if x1 < 0:
-                return(-x1, 0)
+                return(-x1, 0, span_accuracy)
             else:
-                return(-x2, 0)
+                return(-x2, 0, span_accuracy)
 
         #y
         y1 = a*sin(a_theta)
         y2 = b*sin(b_theta)
         span = abs(y1 - y2)
-        #print('span y={}'.format(span))
-        wall_dist = 1.0
-        if abs((span - wall_dist)/(0.5*(span + wall_dist))) < percent_tolerance:
+        span_accuracy = abs((span - self.wall_length)/self.wall_length) # Lower is better
+        if span_accuracy < self.dist_meas_percent_tolerance:
             if y1 < 0:
-                return(-y1, 1)
+                return(-y1, 1, span_accuracy)
             else:
-                return(-y2, 1)
+                return(-y2, 1, span_accuracy)
 
         return(None)
 
 
+    def cornerOriginToCenterOrigin(self, pos):
+
+        # This changes it so if your coords are so that the origin is in the
+        # bottom left hand corner, now it's in the middle of the arena.
+
+        center_origin_pos = pos + self.bottom_corner
+        return(center_origin_pos)
+
+
     def calculatePosition(self, d1, d2, d3, theta):
 
+        self.df.writeToDebug('************************* In function: {}()'.format('calculatePosition'))
         #This uses some...possibly sketchy geometry, but I think it should work
         #generally, no matter which direction it's pointed in.
         #
@@ -282,7 +307,15 @@ class Robot:
         #do the painful geometry for it. If it's the third, it's actually not specified, and you
         #can only make an educated guess within some range.
         #
-        #d1 is the front sonar, d2 the left, d3 the right.
+        #d1 is the front sonar, d2 the left, d3 the right. From now on they will be in units of METERS.
+        #
+        # For clarity's sake: this is set up so you have x in the "horizontal"
+        # direction (the direction of theta = 0), and y in the vertical direction.
+        # theta increase CCW, like typical in 2D polar coords.
+        # Here, it will return the coords where the origin is the bottom left
+        # corner, so it spans x=(0, wall_length), y=(0, wall_length).
+        #
+        #
         pair12 = [d1, theta, d2, theta + pi/2]
         pair23 = [d2, theta + pi/2, d3, theta - pi/2]
         pair13 = [d1, theta, d3, theta - pi/2]
@@ -295,13 +328,14 @@ class Robot:
         pair23_opp = self.touchingOppWall(*pair23)
         pair13_opp = self.touchingOppWall(*pair13)
 
-        sol = {}
+        sol = np.array([0.0, 0.0])
         same = (pair12_same is not None) or (pair23_same is not None) or (pair13_same is not None)
         opp = (pair12_opp is not None) or (pair23_opp is not None) or (pair13_opp is not None)
 
         if (same and not opp) or (opp and not same):
             if same and not opp:
-                print('two touching same wall')
+                #print('two touching same wall')
+                self.df.writeToDebug('Touching same wall: pair12_same={}, pair23_same={}, pair13_same={}'.format(pair12_same, pair23_same, pair13_same))
 
                 if pair12_same is not None:
                     dist, coord = pair12_same
@@ -317,25 +351,40 @@ class Robot:
 
                 #Sets the coordinate we've figured out.
                 if dist>=0:
-                    sol[coord] = 1.0 - dist
+                    sol[coord] = self.wall_length - dist
                 else:
                     sol[coord] = -dist
 
             if opp and not same:
                 #This means that no two touch the same wall.
-                print('opp walls, not the same')
+                #print('opp walls, not the same')
+                self.df.writeToDebug('Touching opp wall: pair12_opp={}, pair23_opp={}, pair13_opp={}'.format(pair12_opp, pair23_opp, pair13_opp))
+
+                best_span_acc = 1.0 # Lower is better for this.
 
                 if pair12_opp is not None:
-                    dist, coord = pair12_opp
-                    other_ray = [d3*cos(theta - pi/2), d3*sin(theta - pi/2)]
+                    temp_dist, temp_coord, span_accuracy = pair12_opp
+                    if span_accuracy <= best_span_acc:
+                        dist = temp_dist
+                        coord = temp_coord
+                        best_span_acc = span_accuracy
+                        other_ray = [d3*cos(theta - pi/2), d3*sin(theta - pi/2)]
 
                 if pair23_opp is not None:
-                    dist, coord = pair23_opp
-                    other_ray = [d1*cos(theta), d1*sin(theta)]
+                    temp_dist, temp_coord, span_accuracy = pair23_opp
+                    if span_accuracy <= best_span_acc:
+                        dist = temp_dist
+                        coord = temp_coord
+                        best_span_acc = span_accuracy
+                        other_ray = [d1*cos(theta), d1*sin(theta)]
 
                 if pair13_opp is not None:
-                    dist, coord = pair13_opp
-                    other_ray = [d2*cos(theta + pi/2), d2*sin(theta + pi/2)]
+                    temp_dist, temp_coord, span_accuracy = pair13_opp
+                    if span_accuracy <= best_span_acc:
+                        dist = temp_dist
+                        coord = temp_coord
+                        best_span_acc = span_accuracy
+                        other_ray = [d2*cos(theta + pi/2), d2*sin(theta + pi/2)]
 
                 #The dist should already be positive.
                 sol[coord] = dist
@@ -344,16 +393,18 @@ class Robot:
             other_coord = abs(1 - coord)
             other_dist = other_ray[other_coord]
 
+            self.df.writeToDebug('dist={:.3f}, coord={}, other_coord={}, other_ray=({:.3f}, {:.3f})'.format(dist, coord, other_coord, other_ray[0], other_ray[1]))
+
             if other_dist>=0:
-                sol[other_coord] = 1.0 - other_dist
+                sol[other_coord] = self.wall_length - other_dist
             else:
                 sol[other_coord] = -other_dist
 
-            return(sol[0], sol[1])
-
+            return(self.cornerOriginToCenterOrigin(sol))
 
         if same and opp:
-            print('unsolvable case, touching same wall and spanning. Attempting best guess')
+            #print('unsolvable case, touching same wall and spanning. Attempting best guess')
+            self.df.writeToDebug('Touching same AND opp walls.')
 
             if pair12_same is not None:
                 dist, coord = pair12_same
@@ -369,7 +420,7 @@ class Robot:
 
             #Sets the coordinate we've figured out.
             if dist>=0:
-                sol[coord] = 1.0 - dist
+                sol[coord] = self.wall_length - dist
             else:
                 sol[coord] = -dist
 
@@ -388,28 +439,65 @@ class Robot:
             below_margin = min(other_coord_vals)
             above_margin = max(other_coord_vals)
 
-            sol[other_coord] = (-below_margin + (1 - above_margin))/2.0
-            return(sol[0], sol[1])
+            sol[other_coord] = (-below_margin + (self.wall_length - above_margin + below_margin)/2.0)
+            return(self.cornerOriginToCenterOrigin(sol))
+
 
         # This is if something is wrong and it can't figure out the position.
-        return(0, 0)
+        self.df.writeToDebug('Couldnt calc position based on meas., returning default val of (0,0) (in center origin coords).')
+        return(sol)
 
 
     def getPosition(self):
 
+        self.df.writeToDebug('************************* In function: {}()'.format('getPosition'))
+
         assert self.sonar_enable, 'No sonar! exiting.'
         assert self.compass_enable, 'No compass! exiting.'
 
-        d1 = self.sonar_forward.distance()
-        d2 = self.sonar_left.distance()
-        d3 = self.sonar_right.distance()
+        d1, d2, d3 = self.getSonarMeas()
+
         compass_reading = self.compass.getCompassDirection() #From now on, the function will prepare and scale everything.
 
-        position = self.calculatePosition(d1, d2, d3, compass_reading)
-        self.position = np.array(position)
+        self.df.writeToDebug('Raw measurements: d1={:.3f}, d2={:.3f}, d3={:.3f}, angle={:.3f}'.format(d1, d2, d3, compass_reading))
+
+        self.position = self.calculatePosition(d1, d2, d3, compass_reading)
         self.angle = compass_reading
 
         return(self.position, compass_reading)
+
+
+    def getSonarMeas(self):
+
+        assert self.sonar_enable, 'Trying to cal getSonarMeas() but sonar not enabled!'
+
+        i = 0
+        attempts = 5
+        delay = 0.05
+        while i<attempts:
+            d1 = self.sonar_forward.distance()
+            time.sleep(delay)
+            d2 = self.sonar_left.distance()
+            time.sleep(delay)
+            d3 = self.sonar_right.distance()
+            time.sleep(delay)
+
+            # 1.5 being a slight overestimation of sqrt(2) here, the max distance
+            # it should be able to measure.
+            if (d1 > self.wall_length*1.5) or (d2 > self.wall_length*1.5) or (d3 > self.wall_length*1.5):
+                i += 1
+                self.df.writeToDebug('Sonar meas. attempt {} failed: d1={:.3f}, d2={:.3f}, d3={:.3f}, retrying'.format(i, d1, d2, d3))
+            else:
+                return(d1, d2, d3)
+
+        d1 = self.sonar_forward.distance()
+        time.sleep(delay)
+        d2 = self.sonar_left.distance()
+        time.sleep(delay)
+        d3 = self.sonar_right.distance()
+        time.sleep(delay)
+        return(min(d1, self.wall_length*1.5), min(d2, self.wall_length*1.5), min(d3, self.wall_length*1.5))
+
 
     ################# Functions for interacting directly with the robot.
 
@@ -435,9 +523,9 @@ class Robot:
     def DCloop(self, stdscr):
         #https://docs.python.org/3/howto/curses.html
         #https://docs.python.org/3/library/curses.html#curses.window.clrtobot
-        delay_time = 0.5
-        print(curses.LINES)
-        print(curses.COLS)
+        self.df.writeToDebug('************************* In function: {}()'.format('DCloop'))
+        self.df.writeToDebug('Size of curses window: LINES={}, COLS={}'.format(curses.LINES, curses.COLS))
+        delay_time = 0.6
 
         move_str_pos = [0, 6]
 
@@ -446,9 +534,8 @@ class Robot:
         while True:
             c = stdscr.getch()
 
-            #compass_reading = self.compass.getCompassDirection()
-
             if c == curses.KEY_LEFT:
+                self.df.writeToDebug('Pressed Left key, turning CCW')
                 self.doAction(2)
                 time.sleep(delay_time)
                 self.drawStandard(stdscr)
@@ -457,6 +544,7 @@ class Robot:
 
 
             if c == curses.KEY_RIGHT:
+                self.df.writeToDebug('Pressed Right key, turning CW')
                 self.doAction(3)
                 time.sleep(delay_time)
                 self.drawStandard(stdscr)
@@ -465,6 +553,7 @@ class Robot:
 
 
             if c == curses.KEY_UP:
+                self.df.writeToDebug('Pressed Up key, going straight')
                 self.doAction(0)
                 time.sleep(delay_time)
                 self.drawStandard(stdscr)
@@ -473,6 +562,7 @@ class Robot:
 
 
             if c == curses.KEY_DOWN:
+                self.df.writeToDebug('Pressed Down key, going backwards')
                 self.doAction(1)
                 time.sleep(delay_time)
                 self.drawStandard(stdscr)
@@ -480,9 +570,18 @@ class Robot:
                 self.moveCursorRefresh(stdscr)
 
 
+            if c == ord('r'):
+                self.df.writeToDebug('Pressed r, refreshing')
+                time.sleep(delay_time)
+                self.drawStandard(stdscr)
+                stdscr.addstr(move_str_pos[1], move_str_pos[0], 'Pressed r, refreshing')
+                self.moveCursorRefresh(stdscr)
+
+
             elif c == ord('q'):
                 print('you pressed q! exiting')
                 break  # Exit the while loop
+
 
     def moveCursorRefresh(self, stdscr):
         stdscr.move(curses.LINES - 1, curses.COLS - 1)
@@ -495,62 +594,80 @@ class Robot:
         print('exited curses loop.')
 
 
-    def redrawBox(self, stdscr, box_info, pos):
+    def redrawBox(self, stdscr, box_info, pos, angle):
+        # From now on, pass the pos parameter as a percent of the box width in each
+        # direction, so you don't have to deal with scaling things outside of this func.
         side_symbol = '-'
         (box_coord_y, box_coord_x, box_side_y, box_side_x) = box_info
-        stdscr.addstr(box_coord_y - 1, box_coord_x, side_symbol*box_side_x)
-        stdscr.addstr(box_coord_y + box_side_y, box_coord_x, side_symbol*box_side_x)
+        stdscr.addstr(box_coord_y - 1, box_coord_x, 2*side_symbol*box_side_x)
+        stdscr.addstr(box_coord_y + box_side_y, box_coord_x, 2*side_symbol*box_side_x)
         stdscr.addstr(box_coord_y + box_side_y + 1, box_coord_x - 12, '(-0.62, -0.62)')
-        stdscr.addstr(box_coord_y - 1, box_coord_x + box_side_x + 1, '(0.625, 0.625)')
+        stdscr.addstr(box_coord_y - 1, box_coord_x + 2*box_side_x + 1, '(0.625, 0.625)')
 
         for i in range(box_side_y):
             stdscr.addstr(box_coord_y + i, box_coord_x - 1, '|')
-            stdscr.addstr(box_coord_y + i, box_coord_x + box_side_x, '|')
+            stdscr.addstr(box_coord_y + i, box_coord_x + 2*box_side_x, '|')
 
-        stdscr.addstr(box_coord_y + pos[1], box_coord_x + pos[0], 'o')
+        # Note that only the x is scaled here.
+        arrow_list = ['⮕','⬈','↑','⬉','⟵','⬋','↓','↘']
+        angle_ind = int(divmod((angle + pi/8)%(2*pi), pi/4)[0])
+        stdscr.addstr(box_coord_y + -1 + (box_side_y - int(pos[1]*box_side_y)), box_coord_x + 1 + int(pos[0]*2*box_side_x), arrow_list[angle_ind])
 
 
     def drawStandard(self, stdscr):
         stdscr.erase()
+        self.df.writeToDebug('************************* In function: {}()'.format('drawStandard'))
 
         if self.sonar_enable:
-            d1 = self.sonar_forward.distance()
-            d2 = self.sonar_left.distance()
-            d3 = self.sonar_right.distance()
+            self.df.writeToDebug('Getting sonar info')
+            d1, d2, d3 = self.getSonarMeas()
             info_str = 'Sonar meas: (straight = {:.2f}, left = {:.2f}, right = {:.2f})'.format(d1, d2, d3)
+            self.df.writeToDebug(info_str)
             stdscr.addstr(0, 0,  info_str)
 
         if self.compass_enable:
+            self.df.writeToDebug('Getting compass info')
             compass_reading = self.compass.getCompassDirection() #From now on, the function will prepare and scale everything.
             info_str = 'Compass meas: ({:.2f})'.format(compass_reading)
+            self.df.writeToDebug(info_str)
             stdscr.addstr(2, 0,  info_str)
 
 
         if self.sonar_enable and self.compass_enable:
+
+            self.df.writeToDebug('Getting position info')
+
             #Draw box, with best position guess
-            box_side_y = 10
-            box_side_x = 10
+            box_side_x = 25
+            box_side_y = box_side_x
             box_coord_y = 9
             box_coord_x = 45
 
             # getPosition should return the position, where (0,0) is the center of
             # the arena. box_pos is the integer pair for the drawn box indices.
-            raw_pos = self.getPosition()[0]
 
-            box_px_width = (self.arena_side/box_side_x)
             try:
-                box_pos = ((raw_pos + (self.arena_side/2))/box_px_width).astype('int')
-                box_pos[0] = min(box_side_x, max(0, box_pos[0]))
-                box_pos[1] = min(box_side_y, max(0, box_pos[1]))
-            except:
-                box_pos = [0,0]
+                raw_pos, angle = self.getPosition()
+                pos_str = '({:.2f}, {:.2f})'.format(raw_pos[0], raw_pos[1])
+                self.df.writeToDebug('Got position info: {}'.format(pos_str))
+                stdscr.addstr(4, 0, 'Estimated position: {}'.format(pos_str))
 
+                box_percent_pos = (raw_pos - self.bottom_corner)/self.wall_length
+
+            except:
+                box_percent_pos = np.array([0.5, 0.5])
+                angle = 0
+
+            self.df.writeToDebug('drawing agent pos (o) at percent ({:.3f}, {:.3f})'.format(box_percent_pos[0], box_percent_pos[1]))
             box_info = (box_coord_y, box_coord_x, box_side_y, box_side_x)
-            self.redrawBox(stdscr, box_info, box_pos)
+            self.redrawBox(stdscr, box_info, box_percent_pos, angle)
 
         if self.MQTT_enable:
-            IR_read = 'IR target reading:  ' + ' '.join(self.pollTargetServer())
-            stdscr.addstr(4, 0,  IR_read)
+            self.df.writeToDebug('Getting IR target info...')
+            reading_str = ' '.join(self.pollTargetServer())
+            IR_read = 'IR target reading:  ' + reading_str
+            self.df.writeToDebug('Got IR target info: {}'.format(reading_str))
+            stdscr.addstr(8, 0,  IR_read)
 
         stdscr.addstr(curses.LINES - 1, 0,  'Press q or Esc to quit')
 

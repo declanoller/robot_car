@@ -8,4 +8,4 @@ compass_correction['meas_angles'] = np.array([pi, 2.47, 1.85, 1.16, 0.35, -0.57,
 compass = Compass(compass_correction=compass_correction)
 print('Compass object created.')
 
-reading = compass.readCompassLoop(test_time=150, save_plot=True, save_dat=True)
+reading = compass.readCompassLoop(test_time=150, save_plot=True, save_dat=True, print_readings=True)

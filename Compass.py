@@ -5,12 +5,12 @@ import time
 import matplotlib.pyplot as plt
 import numpy as np
 import FileSystemTools as fst
-from math import pi
+from math import pi, sin, copysign
 from scipy.interpolate import interp1d
 
 class Compass:
 
-	def __init__(self, compass_correction=None, close_event=None):
+	def __init__(self, compass_correction=None):
 
 		self.SETTINGS_FILE = 'BASEMENT_CAL_RTIMULib'
 		self.s = RTIMU.Settings(self.SETTINGS_FILE)
@@ -42,7 +42,6 @@ class Compass:
 
 		# I think I need to do these to keep emptying the FIFO compass buffer in parallel.
 		self.last_reading = None
-		self.close_event = close_event
 
 
 
@@ -58,8 +57,18 @@ class Compass:
 					fusion_pose = np.array(data['fusionPose'])
 
 					if self.compass_correction is not None:
+						# Right, so the angle from the compass is actually between
+						# -pi and pi by default, so the one coming out of the correction
+						# will be also, but I have to do the pi - angle thing for now because
+						# the compass is flipped upside down, so it rotates in the wrong direction,
+						# and the pi is there because it's 180 degrees off from where I'd like
+						# it to point for angle=0. So that makes the angle end up between
+						# 0 and 2pi.
 						fusion_pose[2] += self.correction_interp(fusion_pose[2])
 						fusion_pose[2] = pi - fusion_pose[2]
+
+					plane_switch = 0.5*(1 - copysign(1, sin(fusion_pose[2])))
+					fusion_pose[2] = fusion_pose[2]%(2*pi) - 2*pi*plane_switch
 
 					self.last_reading = fusion_pose[2]
 					time.sleep(self.poll_interval*1.0/1000.0)
@@ -72,18 +81,21 @@ class Compass:
 	def getCompassDirection(self):
 		#[2] is the one for the plane parallel with the ground.
 		#return(self.getReading()[2])
+		self.getReading()
 		return(self.last_reading)
 
-	def readCompassLoop(self, test_time=10, save_plot=False, save_dat=False, print_readings=False):
+	def readCompassLoop(self, **kwargs):
+
+
+		test_time = kwargs.get('test_time', 10)
+		save_plot = kwargs.get('save_plot', False)
+		save_dat = kwargs.get('save_dat', False)
+		print_readings = kwargs.get('print_readings', False)
 
 		start_time = time.time()
 		fusion_meas = []
 
 		while True:
-
-			if self.close_event is not None:
-				if self.close_event.is_set():
-					break
 
 			if test_time != 'forever':
 				if time.time()-start_time > test_time:
