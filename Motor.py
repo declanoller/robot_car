@@ -4,7 +4,7 @@ import RPi.GPIO as GPIO
 
 class Motor:
 
-    def __init__(self, left_forward_pin=31, left_reverse_pin=33, right_forward_pin=37, right_reverse_pin=35):
+    def __init__(self, left_forward_pin=32, left_reverse_pin=33, right_forward_pin=37, right_reverse_pin=35):
 
         GPIO.setmode(GPIO.BOARD)
 

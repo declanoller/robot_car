@@ -39,7 +39,7 @@ class Robot:
         self.df.writeToDebug('MQTT enable: {}'.format(self.MQTT_enable))
 
         if self.motor_enable:
-            self.motor = Motor(left_forward_pin=31, left_reverse_pin=33, right_forward_pin=35, right_reverse_pin=37)
+            self.motor = Motor(left_forward_pin=32, left_reverse_pin=33, right_forward_pin=35, right_reverse_pin=37)
             print('Motor object created.')
 
         if self.sonar_enable:
