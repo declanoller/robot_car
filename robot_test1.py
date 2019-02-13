@@ -3,7 +3,7 @@ from Robot import Robot
 
 
 
-rob = Robot(motor_enable=True, sonar_enable=True, compass_enable=True, MQTT_enable=True)
+rob = Robot(save_hist=True, quiet=True, arena_mode=True, compass_correction_file='13-02-2019_12-41-43_compass_cal.json')
 
 rob.directControl()
 

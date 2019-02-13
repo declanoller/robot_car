@@ -11,7 +11,7 @@ from torch.distributions import Categorical
 import FileSystemTools as fst
 from collections import namedtuple
 from matplotlib.colors import LinearSegmentedColormap
-
+import traceback as tb
 
 Experience = namedtuple('exp_tup',('s','a','r','s_next'))
 
@@ -54,6 +54,7 @@ class Agent:
 
 		self.params['epsilon'] = kwargs.get('epsilon',0.9)
 		self.params['eps_decay'] = kwargs.get('eps_decay', 0.999)
+		self.params['eps_min'] = kwargs.get('eps_min', 0.02)
 
 		self.params['N_steps'] = kwargs.get('N_steps',10**3)
 		self.params['N_batch'] = int(kwargs.get('N_batch',60))
@@ -85,7 +86,6 @@ class Agent:
 		self.params['exp_buf_len'] = int(kwargs.get('exp_buf_len',10000))
 		self.params['gamma'] = kwargs.get('gamma',1.0)
 		self.params['clamp_grad'] = kwargs.get('clamp_grad',False)
-		self.params['eps_min'] = kwargs.get('eps_min', 0.02)
 
 		self.figsize = kwargs.get('figsize', (12, 8))
 		self.R_tot_hist = []
@@ -108,7 +108,7 @@ class Agent:
 
 		#self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 		self.device = torch.device('cpu')
-		print('\nusing device:',self.device)
+		#print('\nusing device:',self.device)
 
 		self.dtype = torch.float32
 		torch.set_default_dtype(self.dtype)
@@ -236,7 +236,7 @@ class Agent:
 	def softmaxAction(self, NN, state_vec):
 		pi_vals = self.forwardPass(self.actor_NN, state_vec).detach()
 		m = Categorical(pi_vals)
-		return(m.sample())
+		return(m.sample().item())
 
 
 	def forwardPass(self, NN, state_vec):
@@ -303,56 +303,61 @@ class Agent:
 
 		s = self.getStateVec()
 
-		for i in range(self.params['N_steps']):
+		try:
+			for i in range(self.params['N_steps']):
 
-			self.updateEpsilon()
+				self.updateEpsilon()
 
-			self.updateFrozenQ(i)
+				self.updateFrozenQ(i)
 
-			a = self.epsGreedyAction(self.policy_NN, s)
-			r, s_next = self.iterate(a)
+				a = self.epsGreedyAction(self.policy_NN, s)
+				r, s_next = self.iterate(a)
 
-			self.updateR(r, i)
+				self.updateR(r, i)
 
-			a_next = self.epsGreedyAction(self.policy_NN, s_next)
+				a_next = self.epsGreedyAction(self.policy_NN, s_next)
 
-			self.addExperience(Experience(s,a,r,s_next))
+				self.addExperience(Experience(s,a,r,s_next))
 
-			if len(self.experiences)>=2*self.params['N_batch']:
+				if len(self.experiences)>=2*self.params['N_batch']:
 
-				#Get random batch
-				batch_Q_samples = sample(self.experiences,self.params['N_batch'])
-				experiences = Experience(*zip(*batch_Q_samples))
+					#Get random batch
+					batch_Q_samples = sample(self.experiences,self.params['N_batch'])
+					experiences = Experience(*zip(*batch_Q_samples))
 
-				states = torch.stack(experiences.s)
-				actions = experiences.a
-				rewards = torch.stack(experiences.r)
-				states_next = torch.stack(experiences.s_next)
+					states = torch.stack(experiences.s)
+					actions = experiences.a
+					rewards = torch.stack(experiences.r)
+					states_next = torch.stack(experiences.s_next)
 
-				Q_cur = self.forwardPass(self.policy_NN, states)[list(range(len(actions))),actions]
+					Q_cur = self.forwardPass(self.policy_NN, states)[list(range(len(actions))),actions]
 
-				if self.params['double_DQN']:
-					actions_next = self.forwardPass(self.policy_NN, states_next).argmax(dim=1)
-					Q_next = self.forwardPass(self.target_NN, states_next)[list(range(len(actions))), actions_next]
-				else:
-					Q_next = torch.max(self.forwardPass(self.target_NN, states_next), dim=1)[0]
+					if self.params['double_DQN']:
+						actions_next = self.forwardPass(self.policy_NN, states_next).argmax(dim=1)
+						Q_next = self.forwardPass(self.target_NN, states_next)[list(range(len(actions))), actions_next]
+					else:
+						Q_next = torch.max(self.forwardPass(self.target_NN, states_next), dim=1)[0]
 
 
-				if self.params['loss_method'] == 'smoothL1':
-					TD0_error = F.smooth_l1_loss(Q_cur,(rewards + self.params['gamma']*Q_next).detach())
-				if self.params['loss_method'] == 'L2':
-					TD0_error = (rewards + self.params['gamma']*Q_next - Q_cur).pow(2).sum()
+					if self.params['loss_method'] == 'smoothL1':
+						TD0_error = F.smooth_l1_loss(Q_cur,(rewards + self.params['gamma']*Q_next).detach())
+					if self.params['loss_method'] == 'L2':
+						TD0_error = (rewards + self.params['gamma']*Q_next - Q_cur).pow(2).sum()
 
-				self.optimizer.zero_grad()
-				TD0_error.backward()
+					self.optimizer.zero_grad()
+					TD0_error.backward()
 
-				self.optimizer.step()
+					self.optimizer.step()
 
-			s = s_next
+				s = s_next
 
-			if show_plot:
-				self.plotAll()
-				self.fig.canvas.draw()
+				if show_plot:
+					self.plotAll()
+					self.fig.canvas.draw()
+		except:
+			print('run stopped, saving model and plots. Reason for stop:')
+			print(tb.format_exc())
+			#del self.agent
 
 		if save_plot:
 			self.plotAll()
@@ -431,7 +436,7 @@ class Agent:
 
 		plt.close('all')
 
-		self.saveModel()
+		#self.saveModel()
 		self.saveRewardCurve()
 
 		print('self.R_tot/N_steps: {:.2f}'.format(self.R_tot/self.params['N_steps']))
@@ -635,6 +640,7 @@ class Agent:
 
 
 	def saveModel(self):
+		print('saving model to {}'.format(self.model_fname))
 		torch.save(self.policy_NN.state_dict(), self.model_fname)
 
 
@@ -708,7 +714,8 @@ class Agent:
 
 
 	def saveRewardCurve(self):
-		np.savetxt(self.reward_fname,self.R_tot_hist[10:], fmt='%.4f')
+		print('saving reward history to {}'.format(self.reward_fname))
+		np.savetxt(self.reward_fname, self.R_tot_hist[10:], fmt='%.4f')
 
 
 	def saveWeightsHistory(self, header=None):

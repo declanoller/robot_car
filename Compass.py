@@ -5,14 +5,15 @@ import time
 import matplotlib.pyplot as plt
 import numpy as np
 import FileSystemTools as fst
-from math import pi, sin, copysign
+from math import pi, sin, copysign, floor, ceil
 from scipy.interpolate import interp1d
+import json
 
 class Compass:
 
-	def __init__(self, compass_correction=None):
+	def __init__(self, compass_correction=None, compass_correction_file=None, pi_max=True, raw_reading=False, flip_x=True):
 
-		self.SETTINGS_FILE = 'BASEMENT_CAL_RTIMULib'
+		self.SETTINGS_FILE = 'RTIMULib'
 		self.s = RTIMU.Settings(self.SETTINGS_FILE)
 		self.imu = RTIMU.RTIMU(self.s)
 
@@ -30,15 +31,32 @@ class Compass:
 		self.poll_interval = self.imu.IMUGetPollInterval()
 		print('poll interval: ', self.poll_interval)
 
+		# This will make the angle between -pi and pi, which we usually want.
+		# However, for debugging, you might want the simplest thing.
+		self.restrict_to_pi_max = pi_max
+		self.flip_x_direction = flip_x
+
 		self.compass_correction = compass_correction
 		# Pass compass_correction as a dict with "meas" being the ones you measured
 		# and "ideal" being the ideal ones, and it will take care of the rest. They both
 		# have to be np arrays.
 
+		if compass_correction_file is not None:
+			with open(compass_correction_file, 'r') as f:
+				self.compass_correction = json.load(f)
+				self.compass_correction['ideal_angles'] = np.array(self.compass_correction['ideal_angles'])
+				self.compass_correction['meas_angles'] = np.array(self.compass_correction['meas_angles'])
+
+
+
+		if raw_reading:
+			self.restrict_to_pi_max = False
+			self.compass_correction = None
+			self.flip_x_direction = False
+
 		if self.compass_correction is not None:
 			print('applying compass correction from supplied data.')
-			diff = self.compass_correction['ideal_angles'] - self.compass_correction['meas_angles']
-			self.correction_interp = interp1d(self.compass_correction['meas_angles'], diff, kind='cubic')
+			self.correction_interp = self.getCorrectionInterpolation(self.compass_correction)
 
 		# I think I need to do these to keep emptying the FIFO compass buffer in parallel.
 		self.last_reading = None
@@ -56,6 +74,16 @@ class Compass:
 
 					fusion_pose = np.array(data['fusionPose'])
 
+
+					if self.flip_x_direction:
+						fusion_pose[2] = pi - fusion_pose[2]
+
+
+					if self.restrict_to_pi_max:
+						plane_switch = 0.5*(1 - copysign(1, sin(fusion_pose[2])))
+						fusion_pose[2] = fusion_pose[2]%(2*pi) - 2*pi*plane_switch
+
+
 					if self.compass_correction is not None:
 						# Right, so the angle from the compass is actually between
 						# -pi and pi by default, so the one coming out of the correction
@@ -64,11 +92,27 @@ class Compass:
 						# and the pi is there because it's 180 degrees off from where I'd like
 						# it to point for angle=0. So that makes the angle end up between
 						# 0 and 2pi.
-						fusion_pose[2] += self.correction_interp(fusion_pose[2])
-						fusion_pose[2] = pi - fusion_pose[2]
+						try:
+							if fusion_pose[2] < min(self.compass_correction['meas_angles']):
+								fusion_pose[2] = min(self.compass_correction['meas_angles'])
+							if fusion_pose[2] > max(self.compass_correction['meas_angles']):
+								fusion_pose[2] = max(self.compass_correction['meas_angles'])
 
-					plane_switch = 0.5*(1 - copysign(1, sin(fusion_pose[2])))
-					fusion_pose[2] = fusion_pose[2]%(2*pi) - 2*pi*plane_switch
+							fusion_pose[2] += self.correction_interp(fusion_pose[2])
+
+
+							if self.restrict_to_pi_max:
+								plane_switch = 0.5*(1 - copysign(1, sin(fusion_pose[2])))
+								fusion_pose[2] = fusion_pose[2]%(2*pi) - 2*pi*plane_switch
+
+						except:
+							crash_str = 'problem in using interp. Reading passed to interp is: {:.3f}'.format(fusion_pose[2])
+							f = open('crash_file.txt', 'w+')
+							f.write(crash_str)
+							f.close()
+							print(crash_str)
+							return(0)
+
 
 					self.last_reading = fusion_pose[2]
 					time.sleep(self.poll_interval*1.0/1000.0)
@@ -81,8 +125,13 @@ class Compass:
 	def getCompassDirection(self):
 		#[2] is the one for the plane parallel with the ground.
 		#return(self.getReading()[2])
-		self.getReading()
+		# I think I shouldn't do getReading() here, because the assumption is
+		# that self.last_reading is constantly getting reset to be the last one
+		# by the loop thread.
+		#self.getReading()
 		return(self.last_reading)
+
+
 
 	def readCompassLoop(self, **kwargs):
 
@@ -134,6 +183,43 @@ class Compass:
 			plt.savefig(fname+'.png')
 
 		print('done testing compass.')
+
+
+
+
+	def getCorrectionInterpolation(self, compass_correction):
+
+
+		ideal_angles = compass_correction['ideal_angles']
+		meas_angles = compass_correction['meas_angles']
+
+		min_meas = compass_correction['min_raw'] - 0.05*abs(compass_correction['min_raw'])
+		max_meas = compass_correction['max_raw'] + 0.05*abs(compass_correction['max_raw'])
+
+
+		matched = list(zip(meas_angles, ideal_angles))
+
+		matched.append((min_meas, min_meas))
+		matched.append((max_meas, max_meas))
+
+		matched_sorted = sorted(matched, key=lambda x: x[0]) # Sort by increasing meas. angles
+
+		meas_angles = np.array([x[0] for x in matched_sorted])
+		ideal_angles = np.array([x[1] for x in matched_sorted])
+
+		diff = ideal_angles - meas_angles
+		diff_min = diff[0]
+		diff_max = diff[1]
+
+		for i in range(len(diff)):
+			if diff[i] < -pi:
+				diff[i] += 2*pi
+			if diff[i] > pi:
+				diff[i] -= 2*pi
+
+		interp_diff = interp1d(meas_angles, diff, kind='linear')
+		return(interp_diff)
+
 
 
 

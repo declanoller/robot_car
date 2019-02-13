@@ -1,0 +1,5 @@
+compass_correction = {}
+compass_correction['ideal_angles'] = np.array([-3.142, -2.356, -1.571, -0.785, 0.000, 0.785, 1.571, 2.356, 3.142])
+compass_correction['meas_angles'] = np.array([2.055, 2.693, -3.110, -2.695, -2.239, -1.682, -1.007, 0.408, 2.019])
+compass_correction['min_raw'] = -3.12291635771329
+compass_correction['max_raw'] = 3.1376989128817847

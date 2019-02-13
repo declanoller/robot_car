@@ -4,9 +4,10 @@ import os
 from copy import copy,deepcopy
 import time
 import glob
+import subprocess
 
 def getDateString():
-	return(datetime.now().strftime("%H-%M-%S"))
+	return(datetime.now().strftime('%d-%m-%Y_%H-%M-%S'))
 
 
 def makeDir(dir_name):
@@ -188,24 +189,32 @@ def addTrailingSlashIfNeeded(path):
 
 
 
-def gifFromImages(imgs_path, gif_name):
+def gifFromImages(imgs_path, gif_name, ext = '.png'):
 
 
 	imgs_path = stripAnyTrailingSlash(imgs_path)
-	ext = ".png"
 	file_list = glob.glob(imgs_path + '/' + '*' + ext) # Get all the pngs in the current directory
 	#print(file_list)
 	#print([fnameFromFullPath(x).split('.png')[0] for x in file_list])
 	#list.sort(file_list, key=lambda x: int(x.split('_')[1].split('.png')[0]))
-	list.sort(file_list, key=lambda x: int(fnameFromFullPath(x).split('.png')[0]))
+	list.sort(file_list, key=lambda x: int(fnameFromFullPath(x).split(ext)[0]))
 	#list.sort(file_list) # Sort the images by #, this may need to be tweaked for your use case
 	#print(file_list)
 	assert len(file_list) < 200, 'Too many files ({}), will probably crash convert command.'.format(len(file_list))
 
-	with open('image_list.txt', 'w') as file:
+	output_fname = '{}/{}.gif'.format(imgs_path, gif_name)
+
+	check_call_arglist = ['convert'] + file_list + [output_fname]
+	print(check_call_arglist)
+
+	subprocess.check_call(check_call_arglist)
+	# older method:
+
+	'''with open('image_list.txt', 'w') as file:
 	    for item in file_list:
 	        file.write("%s\n" % item)
 
 	os.system('convert @image_list.txt {}/{}.gif'.format(imgs_path,gif_name)) # On windows convert is 'magick'
+	'''
 
 #

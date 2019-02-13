@@ -2,59 +2,119 @@ import time
 import RPi.GPIO as GPIO
 from Motor import Motor
 from Sonar import Sonar
+from TOF import TOF
 from Compass import Compass
-from CommMQTT import CommMQTT
+from MQTTComm import MQTTComm
 from DebugFile import DebugFile
+import FileSystemTools as fst
 
 import matplotlib.pyplot as plt
-from random import randint, random, sample, choice
+import random
 import numpy as np
 from math import sin, cos, tan, pi
 
 import threading
 import curses
 
+import traceback as tb
+
 
 class Robot:
 
-    def __init__(self, motor_enable=True, sonar_enable=True, compass_enable=True, MQTT_enable=True, **kwargs):
+    def __init__(self, **kwargs):
 
+        '''
+        PINS CURRENTLY BEING USED:
+        (these are in terms of GPIO.BOARD, i.e., 1-40.)
+
+        # I2C pins: 3, 5 (SDA, SCL)
+        # TOF pins: 8, 22, 18 (front, left, right)
+        # Motor pins: 32, 33, 35, 37
+
+        '''
+
+        self.init_time = fst.getCurTimeObj()
+
+        self.iteration = 1
 
         #GPIO Mode (BOARD / BCM)
         GPIO.cleanup()
+        #print('GPIO getmode() before set: ', GPIO.getmode())
         GPIO.setmode(GPIO.BOARD)
+        #print('GPIO getmode() after set: ', GPIO.getmode())
 
-        self.df = DebugFile(notes='figuring out freezing problem')
+        self.motor_enable = kwargs.get('motor_enable', True)
+        self.sonar_enable = kwargs.get('sonar_enable', False)
+        self.TOF_enable = kwargs.get('TOF_enable', True)
+        self.compass_enable = kwargs.get('compass_enable', True)
+        self.MQTT_enable = kwargs.get('MQTT_enable', True)
+        self.arena_mode = kwargs.get('arena_mode', True)
+
+        # Set up MQTT first, so it can be passed to DebugFile, for debugging purposes.
+        self.comm = None
+        if self.MQTT_enable:
+            #Compass uses I2C pins, which are 3 (SDA) and 5 (SCL) for the RPi 3.
+            self.comm = MQTTComm(broker_address='192.168.1.240')
+            print('MQTTComm object created.')
+            #self.df.writeToDebug('MQTTComm object created.')
+            print('Starting MQTT loop...')
+            #self.df.writeToDebug('Starting MQTT loop...')
+            self.MQTT_loop_thread = threading.Thread(target=self.comm.startLoop, daemon=True)
+            self.MQTT_loop_thread.start()
+            print('MQTT loop started.')
+            #self.df.writeToDebug('MQTT loop started.')
+
+        self.df = DebugFile(notes='Trying with TOF sensors', mqtt_obj=self.comm)
+        self.date_time_string = self.df.getDateString()
 
         self.df.writeToDebug('************************* In function: {}()'.format('init'))
 
-        self.motor_enable = motor_enable
-        self.sonar_enable = sonar_enable
-        self.compass_enable = compass_enable
-        self.MQTT_enable = MQTT_enable
-
         self.df.writeToDebug('motor enable: {}'.format(self.motor_enable))
         self.df.writeToDebug('sonar enable: {}'.format(self.sonar_enable))
+        self.df.writeToDebug('TOF enable: {}'.format(self.TOF_enable))
         self.df.writeToDebug('compass enable: {}'.format(self.compass_enable))
         self.df.writeToDebug('MQTT enable: {}'.format(self.MQTT_enable))
+
+        self.distance_meas_enable = (self.sonar_enable or self.TOF_enable)
+        all_arena_meas_enabled = self.motor_enable and self.distance_meas_enable and self.MQTT_enable and self.compass_enable
+
+        if self.arena_mode:
+            assert all_arena_meas_enabled, 'Arena mode enabled, but either motor/dist/MQTT/compass not enabled.'
 
         if self.motor_enable:
             self.motor = Motor(left_forward_pin=32, left_reverse_pin=33, right_forward_pin=35, right_reverse_pin=37)
             print('Motor object created.')
 
+
         if self.sonar_enable:
+            print('Creating sonar objects...')
             self.sonar_forward = Sonar(GPIO_TRIGGER=10, GPIO_ECHO=8)
             self.sonar_left = Sonar(GPIO_TRIGGER=24, GPIO_ECHO=22)
             self.sonar_right = Sonar(GPIO_TRIGGER=18, GPIO_ECHO=16)
             print('Sonar objects created.')
 
+
+        if self.TOF_enable:
+            print('Creating TOF objects...')
+            self.TOF_forward = TOF(GPIO_SHUTDOWN=8, i2c_address=0x2a)
+            self.TOF_left = TOF(GPIO_SHUTDOWN=22, i2c_address=0x2b)
+            self.TOF_right = TOF(GPIO_SHUTDOWN=18, i2c_address=0x2c)
+            self.TOF_forward.tofOpen()
+            self.TOF_left.tofOpen()
+            self.TOF_right.tofOpen()
+            self.TOF_forward.tofStartRanging()
+            self.TOF_left.tofStartRanging()
+            self.TOF_right.tofStartRanging()
+            #del self.TOF_forward
+            #self.TOF_forward = TOF(GPIO_SHUTDOWN=8, i2c_address=0x2a)
+            print('TOF objects created.')
+
+
         if self.compass_enable:
             #Compass uses I2C pins, which are 3 (SDA) and 5 (SCL) for the RPi 3.
-            compass_correction = {}
-            compass_correction['ideal_angles'] = np.array([pi, pi*3/4, pi*2/4, pi*1/4, pi*0/4, -pi*1/4, -pi*2/4, -pi*3/4, -pi])
-            compass_correction['meas_angles'] = np.array([pi, 2.47, 1.85, 1.16, 0.35, -0.57, -1.69, -2.46, -pi])
+            self.compass_correction_file = kwargs.get('compass_correction_file', None)
 
-            self.compass = Compass(compass_correction)
+            self.compass = Compass(compass_correction_file=self.compass_correction_file, pi_max=True, flip_x=True)
             print('Compass object created.')
 
             # Using daemon=True will cause this thread to die when the main program dies.
@@ -69,53 +129,62 @@ class Robot:
 
 
 
+        self.save_hist = kwargs.get('save_hist', False)
+        self.quiet = kwargs.get('quiet', False)
 
-        if self.MQTT_enable:
-            #Compass uses I2C pins, which are 3 (SDA) and 5 (SCL) for the RPi 3.
-            self.comm = CommMQTT(broker_address='192.168.1.240')
-            print('CommMQTT object created.')
-            self.df.writeToDebug('CommMQTT object created.')
-
-
-        self.N_state_terms = 6
-
+        # For getting the params passed from Agent, if there are any.
         self.passed_params = {}
         check_params = []
         for param in check_params:
             if kwargs.get(param, None) is not None:
                 self.passed_params[param] = kwargs.get(param, None)
 
-        #Here, the 4 actions will be, in order: forward (F), backward (B), CCW, clockwise turn (CW)
-        self.N_actions = 4
-        self.wall_length = 1.25
-        self.xlims = np.array([-self.wall_length/2, self.wall_length/2])
-        self.ylims = np.array([-self.wall_length/2, self.wall_length/2])
-        self.position = np.array([0.5*(max(self.xlims) + min(self.xlims)), 0.5*(max(self.ylims) + min(self.ylims))])
-        self.bottom_corner = np.array([self.xlims[0], self.ylims[0]])
-        self.lims = np.array((self.xlims,self.ylims))
-        self.robot_draw_rad = self.wall_length/20.0
-        self.target_draw_rad = self.robot_draw_rad
 
-        self.dist_meas_percent_tolerance = 0.2
+        if self.arena_mode:
 
-        #These will be the positions in meters, where (0,0) is the center of the arena.
+            self.wall_length = 1.25
+            self.xlims = np.array([-self.wall_length/2, self.wall_length/2])
+            self.ylims = np.array([-self.wall_length/2, self.wall_length/2])
+            self.position = np.array([0.5*(max(self.xlims) + min(self.xlims)), 0.5*(max(self.ylims) + min(self.ylims))])
+            self.bottom_corner = np.array([self.xlims[0], self.ylims[0]])
+            self.lims = np.array((self.xlims,self.ylims))
+            self.robot_draw_rad = self.wall_length/20.0
+            self.target_draw_rad = self.robot_draw_rad
 
-        #This is in terms of x and y, from the bottom left corner.
-        self.target_positions = np.array([[.19, 0], [.55, 0], [self.wall_length, .21], [self.wall_length, .65], [.97, self.wall_length], [.58, self.wall_length], [0, 1.02], [0, .60]])
-        self.N_targets = len(self.target_positions)
+            self.dist_meas_percent_tolerance = 0.12
 
-        if self.MQTT_enable:
-            time.sleep(0.2)
-            test_IR_read = self.pollTargetServer()
-            print('test IR read: ', test_IR_read)
-            assert len(test_IR_read)==self.N_targets, 'Number of targets ({}) returned from CommMQTT doesn\'t match N_targets ({}) '.format(len(test_IR_read), self.N_targets)
+            #These will be the positions in meters, where (0,0) is the center of the arena.
 
+            #This is in terms of x and y, from the bottom left corner.
+            # This is because right now, #2 isn't working...
+            # These are counting starting from 1
+            self.valid_targets = np.array([1, 2, 3, 6, 8])
+            # This makes it so they're 0 indexed now
+            self.valid_targets -= 1
+            self.target_positions = np.array([[.19, 0], [.55, 0], [self.wall_length, .21], [self.wall_length, .65], [.97, self.wall_length], [.58, self.wall_length], [0, 1.02], [0, .60]])
+            # This makes it so the target positions are w.r.t. the origin at the center.
+            self.target_positions = np.array([self.cornerOriginToCenterOrigin(pos) for pos in self.target_positions])
+
+            self.N_targets = len(self.target_positions)
             self.current_target = 0
 
+            # Set actual target. Only work if MQTT enabled but we'll only be
+            # here if arena_mode is enabled.
+            test_IR_read = self.pollTargetServer()
+            print('test IR read: ', test_IR_read)
+            assert len(test_IR_read)==self.N_targets, 'Number of targets ({}) returned from MQTTComm doesn\'t match N_targets ({}) '.format(len(test_IR_read), self.N_targets)
+            print('Current target is: ', self.current_target)
+
+            self.resetStateValues()
+
+        #Here, the 4 actions will be, in order: forward (F), backward (B), CCW, clockwise turn (CW)
+        self.N_actions = 4
         # This determines the order of the action indices (i.e., 0 is straight, 1 is backward, etc)
         self.action_func_list = [self.motor.goStraight, self.motor.goBackward, self.motor.turn90CCW, self.motor.turn90CW]
 
-        self.resetStateValues()
+        self.N_state_terms = len(self.getStateVec())
+        print('Robot has a state vec of length: ', self.N_state_terms)
+
 
 
     ########### Functions that the Agent class expects.
@@ -123,12 +192,19 @@ class Robot:
 
     def getStateVec(self):
 
-        target_pos = self.target_positions[self.current_target]
+        if self.arena_mode:
+            target_pos = self.target_positions[self.current_target]
 
-        position, compass_reading = self.getPosition()
-        normed_angle = compass_reading/pi
+            position, compass_reading = self.getPosition()
+            normed_angle = compass_reading/pi
 
-        return(np.concatenate((position, normed_angle, target_pos)))
+            #return(np.concatenate((position, [normed_angle], target_pos)))
+            # This will let us use the one trained with velocity, since we don't really
+            # have velocity here.
+            #return(np.concatenate((position, [normed_angle], [0,0], target_pos)))
+            return(np.concatenate((position, [normed_angle], target_pos)))
+        else:
+            return(np.zeros(5))
 
 
     def getPassedParams(self):
@@ -139,18 +215,35 @@ class Robot:
 
 
     def iterate(self, action):
+
+        self.df.writeToDebug('********************* In function: iterate()')
+        if self.arena_mode:
+            iter_str = 'iterate() {}, elapsed time=({}). R_avg={:.3f} --> act={}. pos=({:.2f}, {:.2f}), angle={:.2f}, target={}, targets={}'.format(self.iteration, fst.getTimeDiffStr(self.init_time), self.R_tot/self.iteration, action, self.position[0], self.position[1], self.angle, self.current_target, [int(x) for x in self.pollTargetServer()])
+            self.df.writeToDebug(iter_str)
+            self.print(iter_str)
+
         self.doAction(action)
+        self.iteration += 1
+        self.df.writeToDebug('did action {}'.format(action))
 
-        r = self.reward()
-        if r > 0:
-            self.resetTarget()
+        if self.arena_mode:
+            self.df.writeToDebug('getting reward...')
+            r = self.reward()
+            self.R_tot += r
+            self.df.writeToDebug('got reward {}.'.format(r))
+            self.df.writeToDebug('adding to hist...')
+            self.addToHist()
+            self.df.writeToDebug('added. Return (r, getStateVec())')
+            return(r, self.getStateVec())
 
-        return(r, self.getStateVec())
+
 
 
     def reward(self):
         triggered_IR_sensors = self.pollTargetServer()
-        if triggered_IR_sensors[self.current_target]==1:
+        if int(triggered_IR_sensors[self.current_target])==1:
+            self.print('Current target {} reached! Calling resetTarget()'.format(self.current_target))
+            self.df.writeToDebug('Current target {} reached! Calling resetTarget()'.format(self.current_target))
             self.resetTarget()
             return(1.0)
         else:
@@ -158,19 +251,26 @@ class Robot:
 
 
     def initEpisode(self):
-        self.resetStateValues()
+        self.df.writeToDebug('in function initEpisode()')
         self.resetTarget()
+        self.resetStateValues()
 
 
     def resetStateValues(self):
 
+        self.df.writeToDebug('in function resetStateValues()')
         self.position, self.angle = self.getPosition()
+        self.last_action = 0
+        self.start_time = time.time()
+
 
         self.pos_hist = np.array([self.position])
         self.angle_hist = np.array([self.angle])
-        self.action_hist = [0]
-        self.t = [0]
-        self.r_hist = []
+        self.action_hist = np.array([self.last_action])
+        self.target_hist = np.array([self.current_target])
+        self.t = np.array([0])
+        self.r_hist = np.array([0])
+        self.R_tot = 0
 
 
     def drawState(self, ax):
@@ -218,18 +318,26 @@ class Robot:
 
 
     def resetTarget(self):
-        other_sensors = [i for i in range(self.N_targets) if i!=self.current_target]
+        other_sensors = [i for i in self.valid_targets if i!=self.current_target]
         self.current_target = random.choice(other_sensors)
         self.current_target_pos = self.target_positions[self.current_target]
+        self.print('Target reset in resetTarget(). Current target is now {}.'.format(self.current_target))
+        self.df.writeToDebug('Target reset in resetTarget(). Current target is now {}.'.format(self.current_target))
 
 
     def pollTargetServer(self):
-        return(self.comm.getLatestReadingIR()['IR_reading'].split())
+        mqtt_reading = self.comm.getLatestReadingIR()
+        if mqtt_reading is None:
+            self.df.writeToDebug('No mqtt reading, returning all 0.')
+            return(['0']*self.N_targets)
+
+        return(mqtt_reading['IR_reading'].split())
 
 
     def doAction(self, action):
         assert self.motor_enable, 'Motor not enabled! crashing.'
         # Here, the 4 actions will be, in order: forward (F), backward (B), CCW, clockwise turn (CW)
+        self.last_action = action
         self.action_func_list[action]()
 
 
@@ -242,16 +350,17 @@ class Robot:
         x1 = a*cos(a_theta)
         x2 = b*cos(b_theta)
         #print('x1={:.4f}, x2={:.4f}, norm diff={}'.format(x1,x2, abs((x1 - x2)/(0.5*(x1 + x2)))))
-        if abs((x1 - x2)/(0.5*(x1 + x2))) < self.dist_meas_percent_tolerance:
-            return(x1, 0)
+        same_coord_acc_x = abs((x1 - x2)/self.wall_length)
 
         #y
         y1 = a*sin(a_theta)
         y2 = b*sin(b_theta)
-        if abs((y1 - y2)/(0.5*(y1 + y2))) < self.dist_meas_percent_tolerance:
-            return(y1, 1)
+        same_coord_acc_y = abs((y1 - y2)/self.wall_length)
 
-        return(None)
+        if same_coord_acc_x < same_coord_acc_y:
+            return(x1, 0, same_coord_acc_x)
+        else:
+            return(y1, 1, same_coord_acc_y)
 
 
     def touchingOppWall(self, a, a_theta, b, b_theta):
@@ -262,30 +371,28 @@ class Robot:
         #x
         x1 = a*cos(a_theta)
         x2 = b*cos(b_theta)
-        span = abs(x1 - x2)
+        span_x = abs(x1 - x2)
         #print('span x={}'.format(span))
         #if abs((span - self.wall_length)/(0.5*(span + self.wall_length))) < self.dist_meas_percent_tolerance:
-        span_accuracy = abs((span - self.wall_length)/self.wall_length)
-        if span_accuracy < self.dist_meas_percent_tolerance:
-            # This current way of doing it anchors it to the LEFT/DOWN, so it will always have that bias.
-            # Instead let's try taking the average.
-            if x1 < 0:
-                return(-x1, 0, span_accuracy)
-            else:
-                return(-x2, 0, span_accuracy)
+        span_accuracy_x = abs((span_x - self.wall_length)/self.wall_length)
 
         #y
         y1 = a*sin(a_theta)
         y2 = b*sin(b_theta)
-        span = abs(y1 - y2)
-        span_accuracy = abs((span - self.wall_length)/self.wall_length) # Lower is better
-        if span_accuracy < self.dist_meas_percent_tolerance:
-            if y1 < 0:
-                return(-y1, 1, span_accuracy)
-            else:
-                return(-y2, 1, span_accuracy)
+        span_y = abs(y1 - y2)
+        span_accuracy_y = abs((span_y - self.wall_length)/self.wall_length) # Lower is better
 
-        return(None)
+        if span_accuracy_x < span_accuracy_y:
+            if x1 < 0:
+                return(-x1, 0, span_accuracy_x)
+            else:
+                return(-x2, 0, span_accuracy_x)
+        else:
+            if y1 < 0:
+                return(-y1, 1, span_accuracy_y)
+            else:
+                return(-y2, 1, span_accuracy_y)
+
 
 
     def cornerOriginToCenterOrigin(self, pos):
@@ -314,8 +421,7 @@ class Robot:
         # For clarity's sake: this is set up so you have x in the "horizontal"
         # direction (the direction of theta = 0), and y in the vertical direction.
         # theta increase CCW, like typical in 2D polar coords.
-        # Here, it will return the coords where the origin is the bottom left
-        # corner, so it spans x=(0, wall_length), y=(0, wall_length).
+        # Here, it will return the coords where the origin is the center of the arena.
         #
         #
         pair12 = [d1, theta, d2, theta + pi/2]
@@ -323,32 +429,62 @@ class Robot:
         pair13 = [d1, theta, d3, theta - pi/2]
 
         pair12_same = self.touchingSameWall(*pair12)
-        pair23_same = self.touchingSameWall(*pair23)
+         # 2 and 3 should never be able to hit the same wall... and it makes trouble when they hit opposite walls at the same height!
+        #pair23_same = self.touchingSameWall(*pair23)
+        pair23_same = None
         pair13_same = self.touchingSameWall(*pair13)
+
 
         pair12_opp = self.touchingOppWall(*pair12)
         pair23_opp = self.touchingOppWall(*pair23)
         pair13_opp = self.touchingOppWall(*pair13)
 
+        self.df.writeToDebug('Same walls: pair12_same={}, pair23_same={}, pair13_same={}'.format(pair12_same, pair23_same, pair13_same))
+        self.df.writeToDebug('Opp walls: pair12_opp={}, pair23_opp={}, pair13_opp={}'.format(pair12_opp, pair23_opp, pair13_opp))
+
+        same_accs = [('12', pair12_same), ('13', pair13_same)]
+        opp_accs = [('12', pair12_opp), ('23', pair23_opp), ('13', pair13_opp)]
+
+        # This should sort for the lowest accuracy returned in the tuple.
+        best_acc_tuple_same = sorted(same_accs, key=lambda x: x[1][2])[0]
+        best_acc_tuple_opp = sorted(opp_accs, key=lambda x: x[1][2])[0]
+
+        best_acc_same = best_acc_tuple_same[1][2]
+        best_acc_opp = best_acc_tuple_opp[1][2]
+
+        self.df.writeToDebug('Best accuracy, same wall: {}'.format(best_acc_tuple_same))
+        self.df.writeToDebug('Best accuracy, opp wall: {}'.format(best_acc_tuple_opp))
+
         sol = np.array([0.0, 0.0])
-        same = (pair12_same is not None) or (pair23_same is not None) or (pair13_same is not None)
-        opp = (pair12_opp is not None) or (pair23_opp is not None) or (pair13_opp is not None)
+
+
+        best_acc_percent_diff = abs(best_acc_same - best_acc_opp)
+
+        if best_acc_percent_diff < self.dist_meas_percent_tolerance:
+            same, opp = True, True
+            self.df.writeToDebug('Percent diff between best accs, {:.3f}, is smaller than tolerance {:.3f}, touching same AND opp walls'.format(best_acc_percent_diff, self.dist_meas_percent_tolerance))
+        else:
+            if best_acc_same < best_acc_opp:
+                same, opp = True, False
+                self.df.writeToDebug('Best same acc is better than best opp acc, touching only same wall')
+            else:
+                same, opp = False, True
+                self.df.writeToDebug('Best opp acc is better than best same acc, touching only opp wall')
+
 
         if (same and not opp) or (opp and not same):
             if same and not opp:
-                #print('two touching same wall')
-                self.df.writeToDebug('Touching same wall: pair12_same={}, pair23_same={}, pair13_same={}'.format(pair12_same, pair23_same, pair13_same))
+                #self.df.writeToDebug('Touching same wall: pair12_same={}, pair23_same={}, pair13_same={}'.format(pair12_same, pair23_same, pair13_same))
 
-                if pair12_same is not None:
-                    dist, coord = pair12_same
+                dist, coord, acc = best_acc_tuple_same[1]
+
+                if best_acc_tuple_same[0] == '12':
                     other_ray = [d3*cos(theta - pi/2), d3*sin(theta - pi/2)]
 
-                if pair23_same is not None:
-                    dist, coord = pair23_same
+                if best_acc_tuple_same[0] == '23':
                     other_ray = [d1*cos(theta), d1*sin(theta)]
 
-                if pair13_same is not None:
-                    dist, coord = pair13_same
+                if best_acc_tuple_same[0] == '13':
                     other_ray = [d2*cos(theta + pi/2), d2*sin(theta + pi/2)]
 
                 #Sets the coordinate we've figured out.
@@ -360,38 +496,23 @@ class Robot:
             if opp and not same:
                 #This means that no two touch the same wall.
                 #print('opp walls, not the same')
-                self.df.writeToDebug('Touching opp wall: pair12_opp={}, pair23_opp={}, pair13_opp={}'.format(pair12_opp, pair23_opp, pair13_opp))
+                #self.df.writeToDebug('Touching opp wall: pair12_opp={}, pair23_opp={}, pair13_opp={}'.format(pair12_opp, pair23_opp, pair13_opp))
 
-                best_span_acc = 1.0 # Lower is better for this.
+                dist, coord, acc = best_acc_tuple_opp[1]
 
-                if pair12_opp is not None:
-                    temp_dist, temp_coord, span_accuracy = pair12_opp
-                    if span_accuracy <= best_span_acc:
-                        dist = temp_dist
-                        coord = temp_coord
-                        best_span_acc = span_accuracy
-                        other_ray = [d3*cos(theta - pi/2), d3*sin(theta - pi/2)]
+                if best_acc_tuple_opp[0] == '12':
+                    other_ray = [d3*cos(theta - pi/2), d3*sin(theta - pi/2)]
 
-                if pair23_opp is not None:
-                    temp_dist, temp_coord, span_accuracy = pair23_opp
-                    if span_accuracy <= best_span_acc:
-                        dist = temp_dist
-                        coord = temp_coord
-                        best_span_acc = span_accuracy
-                        other_ray = [d1*cos(theta), d1*sin(theta)]
+                if best_acc_tuple_opp[0] == '23':
+                    other_ray = [d1*cos(theta), d1*sin(theta)]
 
-                if pair13_opp is not None:
-                    temp_dist, temp_coord, span_accuracy = pair13_opp
-                    if span_accuracy <= best_span_acc:
-                        dist = temp_dist
-                        coord = temp_coord
-                        best_span_acc = span_accuracy
-                        other_ray = [d2*cos(theta + pi/2), d2*sin(theta + pi/2)]
+                if best_acc_tuple_opp[0] == '13':
+                    other_ray = [d2*cos(theta + pi/2), d2*sin(theta + pi/2)]
 
                 #The dist should already be positive.
                 sol[coord] = dist
 
-            #This is the other coord we don't have yet.
+            #This is the other coord we don't have yet, which works for either case.
             other_coord = abs(1 - coord)
             other_dist = other_ray[other_coord]
 
@@ -402,22 +523,24 @@ class Robot:
             else:
                 sol[other_coord] = -other_dist
 
-            return(self.cornerOriginToCenterOrigin(sol))
+            pos = self.cornerOriginToCenterOrigin(sol)
+            self.df.writeToDebug('pos. calcd in calcPosition=({:.3f}, {:.3f})'.format(pos[0], pos[1]))
+            return(pos)
+
 
         if same and opp:
             #print('unsolvable case, touching same wall and spanning. Attempting best guess')
-            self.df.writeToDebug('Touching same AND opp walls.')
+            #self.df.writeToDebug('Touching same AND opp walls.')
 
-            if pair12_same is not None:
-                dist, coord = pair12_same
+            dist, coord, acc = best_acc_tuple_same[1]
+
+            if best_acc_tuple_same[0] == '12':
                 other_ray = [d3*cos(theta - pi/2), d3*sin(theta - pi/2)]
 
-            if pair23_same is not None:
-                dist, coord = pair23_same
+            if best_acc_tuple_same[0] == '23':
                 other_ray = [d1*cos(theta), d1*sin(theta)]
 
-            if pair13_same is not None:
-                dist, coord = pair13_same
+            if best_acc_tuple_same[0] == '13':
                 other_ray = [d2*cos(theta + pi/2), d2*sin(theta + pi/2)]
 
             #Sets the coordinate we've figured out.
@@ -442,7 +565,9 @@ class Robot:
             above_margin = max(other_coord_vals)
 
             sol[other_coord] = (-below_margin + (self.wall_length - above_margin + below_margin)/2.0)
-            return(self.cornerOriginToCenterOrigin(sol))
+            pos = self.cornerOriginToCenterOrigin(sol)
+            self.df.writeToDebug('pos. calcd in calcPosition=({:.3f}, {:.3f})'.format(pos[0], pos[1]))
+            return(pos)
 
 
         # This is if something is wrong and it can't figure out the position.
@@ -454,12 +579,12 @@ class Robot:
 
         self.df.writeToDebug('************************* In function: {}()'.format('getPosition'))
 
-        assert self.sonar_enable, 'No sonar! exiting.'
+        assert self.distance_meas_enable, 'No distance sensors enabled! exiting.'
         assert self.compass_enable, 'No compass! exiting.'
 
-        d1, d2, d3 = self.getSonarMeas()
+        d1, d2, d3 = self.getDistanceMeas()
 
-        compass_reading = self.compass.getCompassDirection() #From now on, the function will prepare and scale everything.
+        compass_reading = self.getCompassDirection() #From now on, the function will prepare and scale everything.
 
         self.df.writeToDebug('Raw measurements: d1={:.3f}, d2={:.3f}, d3={:.3f}, angle={:.3f}'.format(d1, d2, d3, compass_reading))
 
@@ -469,13 +594,34 @@ class Robot:
         return(self.position, compass_reading)
 
 
+    def getCompassDirection(self):
+
+        assert self.compass_enable, 'Compass not enabled in getCompassDirection()!'
+
+        return(self.compass.getCompassDirection())
+
+
+    def getDistanceMeas(self):
+
+        # This is for interfacing to whatever distance measuring thing you're using, sonar or TOF.
+        # It only gets the dist. measures, so you can run it not in arena_mode.
+
+        assert self.distance_meas_enable, 'No distance sensors enabled! exiting.'
+
+        if self.sonar_enable:
+            return(self.getSonarMeas())
+
+        if self.TOF_enable:
+            return(self.getTOFMeas())
+
+
     def getSonarMeas(self):
 
         assert self.sonar_enable, 'Trying to cal getSonarMeas() but sonar not enabled!'
 
         i = 0
         attempts = 5
-        delay = 0.05
+        delay = 0.01
         while i<attempts:
             d1 = self.sonar_forward.distance()
             time.sleep(delay)
@@ -498,28 +644,86 @@ class Robot:
         time.sleep(delay)
         d3 = self.sonar_right.distance()
         time.sleep(delay)
-        return(min(d1, self.wall_length*1.5), min(d2, self.wall_length*1.5), min(d3, self.wall_length*1.5))
+        max_dist = self.wall_length*1.5
+        return(min(d1, max_dist), min(d2, max_dist), min(d3, max_dist))
+
+
+    def getTOFMeas(self):
+
+        time.sleep(0.1)
+        front_sensor_offset = 0.13
+        left_sensor_offset = 0.03
+        right_sensor_offset = 0.03
+        d1 = self.TOF_forward.distance() + front_sensor_offset
+        d2 = self.TOF_left.distance() + left_sensor_offset
+        d3 = self.TOF_right.distance() + right_sensor_offset
+
+        if self.arena_mode:
+            max_dist = self.wall_length*1.4
+        else:
+            max_dist = 1000000
+        return(min(d1, max_dist), min(d2, max_dist), min(d3, max_dist))
+
+
+    def positionOutOfBounds(self, pos):
+
+        x = pos[0]
+        y = pos[1]
+
+        if x<self.xlims[0] or x>self.xlims[1]:
+            return(True)
+        if y<self.ylims[0] or y>self.ylims[1]:
+            return(True)
+
+        return(False)
+
+
+    def positionPercentOutOfBounds(self, pos_percent):
+
+        # This is just for testing whether it's in bounds, in terms of percent, where
+        # 0 is one wall and 1 is the other.
+        x = pos_percent[0]
+        y = pos_percent[1]
+
+        if x<0 or x>1:
+            return(True)
+        if y<0 or y>1:
+            return(True)
+
+        return(False)
 
 
     ################# Functions for interacting directly with the robot.
 
 
-    def testAllDevices(self):
+    def testAllDevices(self, test_duration = 2):
+
+        #test_duration = 2
 
         if self.motor_enable:
             print('testing motor!')
             #self.motor.wheelTest(test_time=2)
+
         if self.sonar_enable:
             print('testing sonar! (front)')
-            self.sonar_forward.distanceTestLoop(test_time=3)
+            self.sonar_forward.distanceTestLoop(test_time=test_duration)
             print('testing sonar! (left)')
-            self.sonar_left.distanceTestLoop(test_time=3)
+            self.sonar_left.distanceTestLoop(test_time=test_duration)
             print('testing sonar! (right)')
-            self.sonar_right.distanceTestLoop(test_time=3)
+            self.sonar_right.distanceTestLoop(test_time=test_duration)
+
+        if self.TOF_enable:
+            print('testing TOF! (front)')
+            self.TOF_forward.distanceTestLoop(test_time=test_duration)
+            print('testing TOF! (left)')
+            self.TOF_left.distanceTestLoop(test_time=test_duration)
+            print('testing TOF! (right)')
+            self.TOF_right.distanceTestLoop(test_time=test_duration)
+
         if self.compass_enable:
             print('testing compass!')
             #Compass uses I2C pins, which are 3 and 5 for the RPi 3.
-            self.compass.readCompassLoop(test_time=4)
+            self.compass.readCompassLoop(test_time=test_duration, print_readings=True)
 
 
     def DCloop(self, stdscr):
@@ -527,7 +731,7 @@ class Robot:
         #https://docs.python.org/3/library/curses.html#curses.window.clrtobot
         self.df.writeToDebug('************************* In function: {}()'.format('DCloop'))
         self.df.writeToDebug('Size of curses window: LINES={}, COLS={}'.format(curses.LINES, curses.COLS))
-        delay_time = 0.6
+        delay_time = 0.1
 
         move_str_pos = [0, 6]
 
@@ -538,7 +742,7 @@ class Robot:
 
             if c == curses.KEY_LEFT:
                 self.df.writeToDebug('Pressed Left key, turning CCW')
-                self.doAction(2)
+                self.iterate(2)
                 time.sleep(delay_time)
                 self.drawStandard(stdscr)
                 stdscr.addstr(move_str_pos[1], move_str_pos[0], 'Pressed Left key, turning CCW')
@@ -547,7 +751,7 @@ class Robot:
 
             if c == curses.KEY_RIGHT:
                 self.df.writeToDebug('Pressed Right key, turning CW')
-                self.doAction(3)
+                self.iterate(3)
                 time.sleep(delay_time)
                 self.drawStandard(stdscr)
                 stdscr.addstr(move_str_pos[1], move_str_pos[0], 'Pressed Right key, turning CW')
@@ -556,7 +760,7 @@ class Robot:
 
             if c == curses.KEY_UP:
                 self.df.writeToDebug('Pressed Up key, going straight')
-                self.doAction(0)
+                self.iterate(0)
                 time.sleep(delay_time)
                 self.drawStandard(stdscr)
                 stdscr.addstr(move_str_pos[1], move_str_pos[0], 'Pressed Up key, going straight')
@@ -565,7 +769,7 @@ class Robot:
 
             if c == curses.KEY_DOWN:
                 self.df.writeToDebug('Pressed Down key, going backwards')
-                self.doAction(1)
+                self.iterate(1)
                 time.sleep(delay_time)
                 self.drawStandard(stdscr)
                 stdscr.addstr(move_str_pos[1], move_str_pos[0], 'Pressed Down key, going backwards')
@@ -596,6 +800,7 @@ class Robot:
         print('exited curses loop.')
 
 
+
     def redrawBox(self, stdscr, box_info, pos, angle):
         # From now on, pass the pos parameter as a percent of the box width in each
         # direction, so you don't have to deal with scaling things outside of this func.
@@ -613,6 +818,9 @@ class Robot:
         # Note that only the x is scaled here.
         arrow_list = ['⮕','⬈','↑','⬉','⟵','⬋','↓','↘']
         angle_ind = int(divmod((angle + pi/8)%(2*pi), pi/4)[0])
+        if self.positionPercentOutOfBounds(pos):
+            self.df.writeToDebug('Position PERCENT of box {} out of bounds in redrawBox(), setting to 0.5,0.5 for drawing.'.format(pos))
+            pos = [0.5, 0.5]
         stdscr.addstr(box_coord_y + -1 + (box_side_y - int(pos[1]*box_side_y)), box_coord_x + 1 + int(pos[0]*2*box_side_x), arrow_list[angle_ind])
 
 
@@ -620,22 +828,22 @@ class Robot:
         stdscr.erase()
         self.df.writeToDebug('************************* In function: {}()'.format('drawStandard'))
 
-        if self.sonar_enable:
-            self.df.writeToDebug('Getting sonar info')
-            d1, d2, d3 = self.getSonarMeas()
-            info_str = 'Sonar meas: (straight = {:.2f}, left = {:.2f}, right = {:.2f})'.format(d1, d2, d3)
+        if self.distance_meas_enable:
+            self.df.writeToDebug('Getting distance info')
+            d1, d2, d3 = self.getDistanceMeas()
+            info_str = 'Distance meas: (straight = {:.2f}, left = {:.2f}, right = {:.2f})'.format(d1, d2, d3)
             self.df.writeToDebug(info_str)
             stdscr.addstr(0, 0,  info_str)
 
         if self.compass_enable:
             self.df.writeToDebug('Getting compass info')
-            compass_reading = self.compass.getCompassDirection() #From now on, the function will prepare and scale everything.
+            compass_reading = self.getCompassDirection() #From now on, the function will prepare and scale everything.
             info_str = 'Compass meas: ({:.2f})'.format(compass_reading)
             self.df.writeToDebug(info_str)
             stdscr.addstr(2, 0,  info_str)
 
 
-        if self.sonar_enable and self.compass_enable:
+        if self.arena_mode:
 
             self.df.writeToDebug('Getting position info')
 
@@ -664,6 +872,7 @@ class Robot:
             box_info = (box_coord_y, box_coord_x, box_side_y, box_side_x)
             self.redrawBox(stdscr, box_info, box_percent_pos, angle)
 
+
         if self.MQTT_enable:
             self.df.writeToDebug('Getting IR target info...')
             reading_str = ' '.join(self.pollTargetServer())
@@ -674,17 +883,51 @@ class Robot:
         stdscr.addstr(curses.LINES - 1, 0,  'Press q or Esc to quit')
 
         stdscr.refresh() #Do this after addstr
+        self.df.writeToDebug('end of drawStandard()\n\n')
 
 
     ############ Bookkeeping functions
 
+    def print(self, print_str):
+        if not self.quiet:
+            print(print_str)
+
+
     def addToHist(self):
         self.pos_hist = np.concatenate((self.pos_hist,[self.position]))
         self.angle_hist = np.concatenate((self.angle_hist, [self.angle]))
-        self.t.append(self.t[-1] + self.time_step)
-        self.r_hist.append(self.reward())
+        self.t = np.concatenate((self.t, [time.time() - self.start_time]))
+        self.r_hist = np.concatenate((self.r_hist, [self.reward()]))
+        self.action_hist = np.concatenate((self.action_hist, [self.last_action]))
+        self.target_hist = np.concatenate((self.target_hist, [self.current_target]))
 
+
+    def saveHist(self):
+
+        all_hist = np.concatenate((
+        np.expand_dims(self.t, axis=1),
+        self.pos_hist,
+        np.expand_dims(self.angle_hist, axis=1),
+        np.expand_dims(self.r_hist, axis=1),
+        np.expand_dims(self.action_hist, axis=1).astype('float32'),
+        np.expand_dims(self.target_hist, axis=1).astype('float32'),
+        ), axis=1)
+
+        print('allhist shape: ', all_hist.shape)
+        header = '{}\t{}\t{}\t{}\t{}\t{}\t{}'.format('t', 'x', 'y', 'ang', 'r', 'action', 'target')
+        np.savetxt('all_hist_' + self.date_time_string + '.txt', all_hist, header=header, fmt='%.3f', delimiter='\t')
 
     def __del__(self):
+
         del self.motor
+        time.sleep(0.5)
+        if self.TOF_enable:
+            print('\n\nDeleting TOF objects...')
+            del self.TOF_forward
+            del self.TOF_left
+            del self.TOF_right
+        time.sleep(0.5)
         GPIO.cleanup()
+
+        if self.save_hist:
+            self.saveHist()
