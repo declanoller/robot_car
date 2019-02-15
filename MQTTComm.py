@@ -30,6 +30,7 @@ class MQTTComm:
         #print('Client loop started.')
 
         self.debug_topic_name = 'debug_log'
+        self.iteration_topic_name = 'iterate'
 
 
 
@@ -62,6 +63,13 @@ class MQTTComm:
 
     def publishDebug(self, msg):
         self.client.publish(self.debug_topic_name, payload=msg)
+
+
+
+    def publishIteration(self, msg):
+        # Pass this a dict
+        json_msg = json.dumps(msg)
+        self.client.publish(self.iteration_topic_name, payload=json_msg)
 
 
 

@@ -35,7 +35,7 @@ class Robot:
 
         self.init_time = fst.getCurTimeObj()
 
-        self.iteration = 1
+        self.initial_iteration = kwargs.get('initial_iteration', 0)
 
         #GPIO Mode (BOARD / BCM)
         GPIO.cleanup()
@@ -49,6 +49,7 @@ class Robot:
         self.compass_enable = kwargs.get('compass_enable', True)
         self.MQTT_enable = kwargs.get('MQTT_enable', True)
         self.arena_mode = kwargs.get('arena_mode', True)
+        self.debug_enable = kwargs.get('debug_enable', True)
 
         # Set up MQTT first, so it can be passed to DebugFile, for debugging purposes.
         self.comm = None
@@ -64,7 +65,7 @@ class Robot:
             print('MQTT loop started.')
             #self.df.writeToDebug('MQTT loop started.')
 
-        self.df = DebugFile(notes='Trying with TOF sensors', mqtt_obj=self.comm)
+        self.df = DebugFile(notes='Trying with TOF sensors', mqtt_obj=self.comm, enabled=self.debug_enable)
         self.date_time_string = self.df.getDateString()
 
         self.df.writeToDebug('************************* In function: {}()'.format('init'))
@@ -77,6 +78,18 @@ class Robot:
 
         self.distance_meas_enable = (self.sonar_enable or self.TOF_enable)
         all_arena_meas_enabled = self.motor_enable and self.distance_meas_enable and self.MQTT_enable and self.compass_enable
+
+
+        self.save_hist = kwargs.get('save_hist', False)
+        self.quiet = kwargs.get('quiet', False)
+
+        # For getting the params passed from Agent, if there are any.
+        self.passed_params = {}
+        check_params = []
+        for param in check_params:
+            if kwargs.get(param, None) is not None:
+                self.passed_params[param] = kwargs.get(param, None)
+
 
         if self.arena_mode:
             assert all_arena_meas_enabled, 'Arena mode enabled, but either motor/dist/MQTT/compass not enabled.'
@@ -129,19 +142,9 @@ class Robot:
 
 
 
-        self.save_hist = kwargs.get('save_hist', False)
-        self.quiet = kwargs.get('quiet', False)
-
-        # For getting the params passed from Agent, if there are any.
-        self.passed_params = {}
-        check_params = []
-        for param in check_params:
-            if kwargs.get(param, None) is not None:
-                self.passed_params[param] = kwargs.get(param, None)
-
-
         if self.arena_mode:
 
+            # All units here are in meters.
             self.wall_length = 1.25
             self.xlims = np.array([-self.wall_length/2, self.wall_length/2])
             self.ylims = np.array([-self.wall_length/2, self.wall_length/2])
@@ -153,27 +156,37 @@ class Robot:
 
             self.dist_meas_percent_tolerance = 0.12
 
-            #These will be the positions in meters, where (0,0) is the center of the arena.
-
-            #This is in terms of x and y, from the bottom left corner.
-            # This is because right now, #2 isn't working...
-            # These are counting starting from 1
-            self.valid_targets = np.array([1, 2, 3, 6, 8])
-            # This makes it so they're 0 indexed now
-            self.valid_targets -= 1
             self.target_positions = np.array([[.19, 0], [.55, 0], [self.wall_length, .21], [self.wall_length, .65], [.97, self.wall_length], [.58, self.wall_length], [0, 1.02], [0, .60]])
             # This makes it so the target positions are w.r.t. the origin at the center.
             self.target_positions = np.array([self.cornerOriginToCenterOrigin(pos) for pos in self.target_positions])
+            #These will be the positions in meters, where (0,0) is the center of the arena.
 
             self.N_targets = len(self.target_positions)
             self.current_target = 0
-
-            # Set actual target. Only work if MQTT enabled but we'll only be
-            # here if arena_mode is enabled.
-            test_IR_read = self.pollTargetServer()
-            print('test IR read: ', test_IR_read)
-            assert len(test_IR_read)==self.N_targets, 'Number of targets ({}) returned from MQTTComm doesn\'t match N_targets ({}) '.format(len(test_IR_read), self.N_targets)
             print('Current target is: ', self.current_target)
+
+            # This determines whether we're going to get the rewards from the IR
+            # sensors, or just calc. whether we're close enough in distance.
+            self.reward_method = kwargs.get('reward_method', 'MQTT')
+            if self.reward_method == 'MQTT':
+                #This is in terms of x and y, from the bottom left corner.
+                # This is because right now, #2 isn't working...
+                # These are counting starting from 1
+                self.valid_targets = np.array([1, 2, 3, 6, 8])
+                # This makes it so they're 0 indexed now
+                self.valid_targets -= 1
+
+                # Set actual target. Only work if MQTT enabled but we'll only be
+                # here if arena_mode is enabled.
+                test_IR_read = self.pollTargetServer()
+                print('test IR read: ', test_IR_read)
+                assert len(test_IR_read)==self.N_targets, 'Number of targets ({}) returned from MQTTComm doesn\'t match N_targets ({}) '.format(len(test_IR_read), self.N_targets)
+
+            else:
+                # In this case, we're just gonna give the reward directly, based on its distance.
+                self.reward_distance_thresh = 0.3
+                self.valid_targets = np.array(list(range(8)))
+
 
             self.resetStateValues()
 
@@ -218,9 +231,16 @@ class Robot:
 
         self.df.writeToDebug('********************* In function: iterate()')
         if self.arena_mode:
-            iter_str = 'iterate() {}, elapsed time=({}). R_avg={:.3f} --> act={}. pos=({:.2f}, {:.2f}), angle={:.2f}, target={}, targets={}'.format(self.iteration, fst.getTimeDiffStr(self.init_time), self.R_tot/self.iteration, action, self.position[0], self.position[1], self.angle, self.current_target, [int(x) for x in self.pollTargetServer()])
+            iter_str = 'iterate() {}, elapsed time=({}). R_avg={:.4f} --> act={}. pos=({:.2f}, {:.2f}), angle={:.2f}, target={}, targets={}'.format(self.iteration, fst.getTimeDiffStr(self.init_time), self.R_tot/max(1, self.iteration), action, self.position[0], self.position[1], self.angle, self.current_target, [int(x) for x in self.getTriggerList()])
             self.df.writeToDebug(iter_str)
             self.print(iter_str)
+            iter_dict = {}
+            iter_dict['iteration'] = self.iteration
+            iter_dict['position'] = self.position.tolist()
+            iter_dict['angle'] = self.angle
+            iter_dict['current_target'] = self.current_target
+            iter_dict['trigger_list'] = [int(x) for x in self.getTriggerList()]
+            #self.comm.publishIteration(iter_dict)
 
         self.doAction(action)
         self.iteration += 1
@@ -238,10 +258,24 @@ class Robot:
 
 
 
+    def targetTriggered(self, target_num):
+        # Right now this is only for figuring out if it's close to a target
+        # by calculation, not sensing (with the IR sensors).
+        #
+        # 0 indexed.
+        # returns true if dist. is below reward_distance_thresh, false otherwise.
+        # Assumes self.position hasn't changed (or it will be pretty expensive to
+        # run several times each iteration.)
+        return(np.linalg.norm(self.position - self.target_positions[target_num]) < self.reward_distance_thresh)
+
 
     def reward(self):
-        triggered_IR_sensors = self.pollTargetServer()
-        if int(triggered_IR_sensors[self.current_target])==1:
+        if self.reward_method == 'MQTT':
+            current_target_triggered = (int(self.pollTargetServer()[self.current_target]) == 1)
+        else:
+            current_target_triggered = self.targetTriggered(self.current_target)
+
+        if current_target_triggered:
             self.print('Current target {} reached! Calling resetTarget()'.format(self.current_target))
             self.df.writeToDebug('Current target {} reached! Calling resetTarget()'.format(self.current_target))
             self.resetTarget()
@@ -261,6 +295,7 @@ class Robot:
         self.df.writeToDebug('in function resetStateValues()')
         self.position, self.angle = self.getPosition()
         self.last_action = 0
+        self.iteration = self.initial_iteration
         self.start_time = time.time()
 
 
@@ -269,6 +304,7 @@ class Robot:
         self.action_hist = np.array([self.last_action])
         self.target_hist = np.array([self.current_target])
         self.t = np.array([0])
+        self.iterations = np.array([self.iteration])
         self.r_hist = np.array([0])
         self.R_tot = 0
 
@@ -318,11 +354,22 @@ class Robot:
 
 
     def resetTarget(self):
-        other_sensors = [i for i in self.valid_targets if i!=self.current_target]
-        self.current_target = random.choice(other_sensors)
+        other_targets = [i for i in self.valid_targets if i!=self.current_target]
+        self.current_target = random.choice(other_targets)
         self.current_target_pos = self.target_positions[self.current_target]
         self.print('Target reset in resetTarget(). Current target is now {}.'.format(self.current_target))
         self.df.writeToDebug('Target reset in resetTarget(). Current target is now {}.'.format(self.current_target))
+
+
+    def getTriggerList(self):
+        # This gives you the binary list of the targets that have been triggered,
+        # whether you're using the MQTT reward method or just calcing it yourself.
+        if self.reward_method == 'MQTT':
+            return(self.pollTargetServer())
+        else:
+            # I know it's fucking stupid to do this, but right now pollTargetServer
+            # returns a string and I just wanna drop this function in for it.
+            return([str(int(self.targetTriggered(i))) for i in self.valid_targets])
 
 
     def pollTargetServer(self):
@@ -896,15 +943,17 @@ class Robot:
     def addToHist(self):
         self.pos_hist = np.concatenate((self.pos_hist,[self.position]))
         self.angle_hist = np.concatenate((self.angle_hist, [self.angle]))
+        self.iterations = np.concatenate((self.iterations, [self.iteration]))
         self.t = np.concatenate((self.t, [time.time() - self.start_time]))
         self.r_hist = np.concatenate((self.r_hist, [self.reward()]))
         self.action_hist = np.concatenate((self.action_hist, [self.last_action]))
         self.target_hist = np.concatenate((self.target_hist, [self.current_target]))
 
 
-    def saveHist(self):
+    def saveHist(self, **kwargs):
 
         all_hist = np.concatenate((
+        np.expand_dims(self.iterations, axis=1),
         np.expand_dims(self.t, axis=1),
         self.pos_hist,
         np.expand_dims(self.angle_hist, axis=1),
@@ -914,8 +963,14 @@ class Robot:
         ), axis=1)
 
         print('allhist shape: ', all_hist.shape)
-        header = '{}\t{}\t{}\t{}\t{}\t{}\t{}'.format('t', 'x', 'y', 'ang', 'r', 'action', 'target')
-        np.savetxt('all_hist_' + self.date_time_string + '.txt', all_hist, header=header, fmt='%.3f', delimiter='\t')
+        header = '{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}'.format('iter', 't', 'x', 'y', 'ang', 'r', 'action', 'target')
+
+        default_fname = 'all_hist_' + self.date_time_string + '.txt'
+        fname = kwargs.get('fname', default_fname)
+        print('\nSaving robot hist to', fname)
+        np.savetxt(fname, all_hist, header=header, fmt='%.3f', delimiter='\t')
+
+
 
     def __del__(self):
 
@@ -928,6 +983,3 @@ class Robot:
             del self.TOF_right
         time.sleep(0.5)
         GPIO.cleanup()
-
-        if self.save_hist:
-            self.saveHist()

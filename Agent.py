@@ -12,6 +12,7 @@ import FileSystemTools as fst
 from collections import namedtuple
 from matplotlib.colors import LinearSegmentedColormap
 import traceback as tb
+import json
 
 Experience = namedtuple('exp_tup',('s','a','r','s_next'))
 
@@ -71,12 +72,14 @@ class Agent:
 
 		self.dir = kwargs.get('dir','misc_runs')
 		self.date_time = kwargs.get('date_time',fst.getDateString())
+		#self.base_fname = fst.paramDictToFnameStr(self.params) + '_' + self.date_time
 		self.base_fname = fst.paramDictToFnameStr(self.params) + '_' + self.date_time
 		self.img_fname = fst.combineDirAndFile(self.dir, self.base_fname + '.png')
 		self.log_fname = fst.combineDirAndFile(self.dir, 'log_' + self.base_fname + '.txt')
 		self.reward_fname = fst.combineDirAndFile(self.dir, 'reward_' + self.base_fname + '.txt')
 		self.weights_hist_fname = fst.combineDirAndFile(self.dir, 'weights_hist_' + self.base_fname + '.txt')
 		self.model_fname = fst.combineDirAndFile(self.dir, 'model_' + self.base_fname + '.model')
+		self.optimizer_fname = fst.combineDirAndFile(self.dir, 'optimizer_' + self.base_fname + '.model')
 
 		##### These are params we don't need in the basename.
 
@@ -93,9 +96,11 @@ class Agent:
 
 		self.initLearningParams()
 
-		self.createFigure()
+		#self.createFigure()
 
-		fst.writeDictToFile(self.params, self.log_fname)
+		self.params['save_params_to_file'] = kwargs.get('save_params_to_file', True)
+		if self.params['save_params_to_file']:
+			fst.writeDictToFile(self.params, self.log_fname)
 
 
 	def initLearningParams(self):
@@ -189,112 +194,11 @@ class Agent:
 
 
 
-	######### Functions for updating values periodically.
-
-
-	def updateFrozenQ(self, iteration):
-
-		if iteration%self.params['target_update']==0 and iteration>self.params['N_batch']:
-			if self.params['features'] == 'DQN':
-				self.target_NN.load_state_dict(self.policy_NN.state_dict())
-			if self.params['features'] == 'AC':
-				self.target_critic_NN.load_state_dict(self.critic_NN.state_dict())
-
-
-	def updateEpsilon(self):
-		# This will have the effect of always trying to move eps to eps_min, even if
-		# you set eps=0.
-		self.params['epsilon'] = (self.params['epsilon'] - self.params['eps_min'])*self.params['eps_decay'] + self.params['eps_min']
-
-
-	def addExperience(self,experience):
-		if len(self.experiences) < self.params['exp_buf_len']:
-			self.experiences.append(None)
-		self.experiences[self.exp_pos] = experience
-		self.exp_pos = (self.exp_pos + 1) % self.params['exp_buf_len']
-
-
-	def updateR(self, r, iteration):
-		self.R_tot += r.item()
-		self.R_tot_hist.append(self.R_tot/(iteration+1))
-
-		if iteration%int(self.params['N_steps']/10) == 0:
-			print('iteration {}, R_tot/i = {:.3f}'.format(iteration, self.R_tot_hist[-1]))
-			if self.scheduler is not None:
-				print('LR: {:.4f}'.format(self.optimizer.param_groups[0]['lr']))
-
-
-	def updateWeightsList(self, weights):
-
-		self.weights_history.append(weights)
-
-
-
-	########### Functions for interacting with networks.
-
-
-	def softmaxAction(self, NN, state_vec):
-		pi_vals = self.forwardPass(self.actor_NN, state_vec).detach()
-		m = Categorical(pi_vals)
-		return(m.sample().item())
-
-
-	def forwardPass(self, NN, state_vec):
-		#This will automatically figure out if it's a single tensor or a batch,
-		#and if it's a single, unsqueeze it to the right dimension and then squeeze it
-		#again after. It assumes that the network only has a single input dimension, though
-		#(so it won't handle it if the input shape for the network is 3x5 or something).
-		assert len(state_vec.shape)>=1, 'len of state vec is <1, error.'
-
-		if len(state_vec.shape)==1:
-			output = NN(state_vec.unsqueeze(dim=0)).squeeze()
-		else:
-			output = NN(state_vec)
-
-		return(output)
-
-
-	def greedyAction(self, NN, state_vec):
-		return(self.forwardPass(NN, state_vec).argmax().item())
-
-
-	def epsGreedyAction(self, NN, state_vec):
-		if random()>self.params['epsilon']:
-			return(self.greedyAction(NN, state_vec))
-		else:
-			return(self.getRandomAction())
-
-
-	def getRandomAction(self):
-		return(randint(0, self.N_actions-1))
-
-
-	def linEpsGreedyAction(self, s):
-
-		if random()>self.params['epsilon']:
-			return(self.linGreedyAction(s))
-		else:
-			return(self.getRandomAction())
-
-
-	def linGreedyAction(self, state_vec):
-		return(torch.matmul(self.w_Q.t(), state_vec).argmax())
-
-
-	def valueFunction(self, state_vec):
-
-		if self.params['features']=='linear':
-			return(torch.matmul(self.w_Q.t(), state_vec))
-
-		if self.params['features']=='DQN':
-			return(self.forwardPass(self.policy_NN, state_vec))
-
-
 
 	########### Functions for different episode types.
 
 
-	def DQNepisode(self, show_plot=True, save_plot=False):
+	def DQNepisode(self, show_plot=False, save_plot=False, save_NN_info=False):
 
 		if show_plot:
 			self.showFig()
@@ -354,22 +258,34 @@ class Agent:
 				if show_plot:
 					self.plotAll()
 					self.fig.canvas.draw()
+
+			exit_code = 0
+
 		except:
-			print('run stopped, saving model and plots. Reason for stop:')
+			print('\nrun stopped, saving model and plots. Reason for stop:')
 			print(tb.format_exc())
+			exit_code = 1
 			#del self.agent
 
-		if save_plot:
+		'''if save_plot:
 			self.plotAll()
 			plt.savefig(self.img_fname)
 
-		plt.close('all')
+		plt.close('all')'''
 
-		self.saveModel()
-		self.saveRewardCurve()
+		if save_NN_info:
+			self.saveModel()
+			self.saveOptimizer()
+			self.saveRewardCurve()
 
-		print('self.R_tot/N_steps: {:.2f}'.format(self.R_tot/self.params['N_steps']))
-		return(self.R_tot/self.params['N_steps'])
+		return_dict = {
+		'R_avg' : self.R_tot/self.params['N_steps'],
+		'exit_code' : exit_code
+		}
+
+		print('self.R_tot/N_steps: {:.2f}'.format(return_dict['R_avg']))
+
+		return(return_dict)
 
 
 	def ACepisode(self, show_plot=True, save_plot=False):
@@ -611,6 +527,109 @@ class Agent:
 
 
 
+	######### Functions for updating values periodically.
+
+
+	def updateFrozenQ(self, iteration):
+
+		if iteration%self.params['target_update']==0 and iteration>self.params['N_batch']:
+			if self.params['features'] == 'DQN':
+				self.target_NN.load_state_dict(self.policy_NN.state_dict())
+			if self.params['features'] == 'AC':
+				self.target_critic_NN.load_state_dict(self.critic_NN.state_dict())
+
+
+	def updateEpsilon(self):
+		# This will have the effect of always trying to move eps to eps_min, even if
+		# you set eps=0.
+		self.params['epsilon'] = (self.params['epsilon'] - self.params['eps_min'])*self.params['eps_decay'] + self.params['eps_min']
+
+
+	def addExperience(self, experience):
+		if len(self.experiences) < self.params['exp_buf_len']:
+			self.experiences.append(None)
+		self.experiences[self.exp_pos] = experience
+		self.exp_pos = (self.exp_pos + 1) % self.params['exp_buf_len']
+
+
+	def updateR(self, r, iteration):
+		self.R_tot += r.item()
+		#self.R_tot_hist.append(self.R_tot/(iteration+1))
+		self.R_tot_hist.append(self.R_tot)
+
+		if iteration%max(1, int(self.params['N_steps']/10)) == 0:
+			print('iteration {}, R_tot/i = {:.3f}'.format(iteration, self.R_tot_hist[-1]))
+			if self.scheduler is not None:
+				print('LR: {:.4f}'.format(self.optimizer.param_groups[0]['lr']))
+
+
+	def updateWeightsList(self, weights):
+
+		self.weights_history.append(weights)
+
+
+
+	########### Functions for interacting with networks.
+
+
+	def softmaxAction(self, NN, state_vec):
+		pi_vals = self.forwardPass(self.actor_NN, state_vec).detach()
+		m = Categorical(pi_vals)
+		return(m.sample().item())
+
+
+	def forwardPass(self, NN, state_vec):
+		#This will automatically figure out if it's a single tensor or a batch,
+		#and if it's a single, unsqueeze it to the right dimension and then squeeze it
+		#again after. It assumes that the network only has a single input dimension, though
+		#(so it won't handle it if the input shape for the network is 3x5 or something).
+		assert len(state_vec.shape)>=1, 'len of state vec is <1, error.'
+
+		if len(state_vec.shape)==1:
+			output = NN(state_vec.unsqueeze(dim=0)).squeeze()
+		else:
+			output = NN(state_vec)
+
+		return(output)
+
+
+	def greedyAction(self, NN, state_vec):
+		return(self.forwardPass(NN, state_vec).argmax().item())
+
+
+	def epsGreedyAction(self, NN, state_vec):
+		if random()>self.params['epsilon']:
+			return(self.greedyAction(NN, state_vec))
+		else:
+			return(self.getRandomAction())
+
+
+	def getRandomAction(self):
+		return(randint(0, self.N_actions-1))
+
+
+	def linEpsGreedyAction(self, s):
+
+		if random()>self.params['epsilon']:
+			return(self.linGreedyAction(s))
+		else:
+			return(self.getRandomAction())
+
+
+	def linGreedyAction(self, state_vec):
+		return(torch.matmul(self.w_Q.t(), state_vec).argmax())
+
+
+	def valueFunction(self, state_vec):
+
+		if self.params['features']=='linear':
+			return(torch.matmul(self.w_Q.t(), state_vec))
+
+		if self.params['features']=='DQN':
+			return(self.forwardPass(self.policy_NN, state_vec))
+
+
+
 	########### These are functions for interacting with the agent object class.
 
 
@@ -639,9 +658,84 @@ class Agent:
 	############ Functions for saving and loading.
 
 
-	def saveModel(self):
-		print('saving model to {}'.format(self.model_fname))
-		torch.save(self.policy_NN.state_dict(), self.model_fname)
+	def loadModel(self, **kwargs):
+		# So this will match them, but it shouldn't be too bad.
+		fname = kwargs.get('fname', None)
+		print('\nloading model from {}'.format(fname))
+		self.policy_NN.load_state_dict(torch.load(fname))
+		self.target_NN.load_state_dict(self.policy_NN.state_dict())
+
+
+	def loadOptimizer(self, **kwargs):
+		fname = kwargs.get('fname', None)
+		print('\nloading optimizer from {}'.format(fname))
+		self.optimizer.load_state_dict(torch.load(fname))
+
+
+	def loadParams(self, **kwargs):
+		fname = kwargs.get('fname', None)
+		print('\nloading params from {}'.format(fname))
+		with open(fname, 'r') as f:
+			NN_params = json.load(f)
+
+		self.params['epsilon'] = NN_params['epsilon']
+		self.exp_pos = NN_params['exp_pos']
+
+
+	def loadExperiences(self, **kwargs):
+		fname = kwargs.get('fname', None)
+		print('\nloading experiences from {}'.format(fname))
+		with open(fname, 'r') as f:
+			exp_dict = json.load(f)
+
+		temp_exp = []
+		for i, e_dict in exp_dict.items():
+			temp_exp.append(Experience(torch.tensor(e_dict['s']), e_dict['a'], torch.tensor(e_dict['r']), torch.tensor(e_dict['s_next']) ))
+
+		self.experiences = temp_exp
+
+
+
+
+	def saveModel(self, **kwargs):
+		fname = kwargs.get('fname', self.model_fname)
+		print('\nsaving model to {}'.format(fname))
+		torch.save(self.policy_NN.state_dict(), fname)
+
+
+	def saveOptimizer(self, **kwargs):
+		fname = kwargs.get('fname', self.optimizer_fname)
+		print('\nsaving optimizer to {}'.format(fname))
+		torch.save(self.optimizer.state_dict(), fname)
+
+
+	def saveParams(self, **kwargs):
+		fname = kwargs.get('fname', None)
+		print('\nsaving NN params to {}'.format(fname))
+		NN_params = {
+		'epsilon' : self.params['epsilon'],
+		'exp_pos' : self.exp_pos
+		}
+		with open(fname, 'w+') as f:
+			json.dump(NN_params, f, indent=4)
+
+
+
+	def saveExperiences(self, **kwargs):
+		fname = kwargs.get('fname', None)
+		print('\nsaving experiences to {}'.format(fname))
+		temp_exp = {}
+		for i, e in enumerate(self.experiences):
+			temp_exp[i] = {
+			's' : e.s.tolist(),
+			'a' : e.a,
+			'r' : e.r.item(),
+			's_next' : e.s_next.tolist()
+			}
+
+		with open(fname, 'w+') as f:
+			json.dump(temp_exp, f, indent=4)
+
 
 
 	def loadModelPlay(self, model_fname, show_plot=True, save_plot=False, make_gif=False, N_steps=10**3, load_params=False, zero_eps=True):
@@ -714,7 +808,7 @@ class Agent:
 
 
 	def saveRewardCurve(self):
-		print('saving reward history to {}'.format(self.reward_fname))
+		print('\nsaving reward history to {}'.format(self.reward_fname))
 		np.savetxt(self.reward_fname, self.R_tot_hist[10:], fmt='%.4f')
 
 

@@ -15,8 +15,9 @@ target_update = 500,
 double_DQN = False,
 NL_fn = 'tanh',
 
-save_hist=True,
-compass_correction_file='13-02-2019_12-41-43_compass_cal.json'
+save_hist=False,
+compass_correction_file='13-02-2019_13-44-57_compass_cal.json',
+reward_method='calculated'
 )
 
 ag.DQNepisode(show_plot=False, save_plot=True)

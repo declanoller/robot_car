@@ -16,6 +16,8 @@ class DebugFile:
 		self.full_path_fname = fst.combineDirAndFile(self.local_path, self.debug_fname)
 		self.notes = kwargs.get('notes', '')
 
+		self.enabled = kwargs.get('enabled', True)
+
 		self.mqtt_obj = kwargs.get('mqtt_obj', None)
 
 		#self.close_event = file_tool.close_event
@@ -31,15 +33,17 @@ class DebugFile:
 
 	def writeToDebug(self, write_string):
 
-		date_time_string = datetime.now().strftime("[%H:%M:%S") + '.' + str(int(int(datetime.now().strftime("%f"))/1000.0))+datetime.now().strftime("   %Y-%m-%d]")
-		whole_string = date_time_string + '\t' + write_string + '\n'
+		if self.enabled:
 
-		if self.mqtt_obj is not None:
-			self.mqtt_obj.publishDebug(whole_string)
+			date_time_string = datetime.now().strftime("[%H:%M:%S") + '.' + str(int(int(datetime.now().strftime("%f"))/1000.0))+datetime.now().strftime("   %Y-%m-%d]")
+			whole_string = date_time_string + '\t' + write_string + '\n'
 
-		fDebug = open(self.full_path_fname, 'a')
-		fDebug.write(whole_string)
-		fDebug.close()
+			if self.mqtt_obj is not None:
+				self.mqtt_obj.publishDebug(whole_string)
+
+			fDebug = open(self.full_path_fname, 'a+')
+			fDebug.write(whole_string)
+			fDebug.close()
 
 
 	def recordTempMemCPU(self):
