@@ -558,7 +558,7 @@ class Agent:
 		self.R_tot_hist.append(self.R_tot)
 
 		if iteration%max(1, int(self.params['N_steps']/10)) == 0:
-			print('iteration {}, R_tot/i = {:.3f}'.format(iteration, self.R_tot_hist[-1]))
+			print('iteration {}, R_tot = {:.3f}'.format(iteration, self.R_tot_hist[-1]))
 			if self.scheduler is not None:
 				print('LR: {:.4f}'.format(self.optimizer.param_groups[0]['lr']))
 

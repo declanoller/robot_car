@@ -3,7 +3,7 @@ import time
 import RPi.GPIO as GPIO
 
 left_forward_pin=33
-left_reverse_pin=31
+left_reverse_pin=32
 right_forward_pin=37
 right_reverse_pin=35
 

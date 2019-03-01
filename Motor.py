@@ -20,8 +20,8 @@ class Motor:
         concrete = 0.2
         concrete_ball_wheel = 0.7
         self.friction_fudge_factor = concrete_ball_wheel
-        self.turn_time = 1.0
-        self.straight_travel_time = 0.8
+        self.turn_time = 0.75
+        self.straight_travel_time = 1.0
         self.tiny_turn_factor = 0.15
 
         self.motor_asymmetry_fudge_factor = 0.3
@@ -54,7 +54,7 @@ class Motor:
         GPIO.output(self.right_forward_pin, GPIO.HIGH)
         time.sleep(self.straight_travel_time*self.friction_fudge_factor)
         GPIO.output(self.left_forward_pin, GPIO.LOW)
-        time.sleep(self.straight_travel_time*self.friction_fudge_factor*self.motor_asymmetry_fudge_factor)
+        #time.sleep(self.straight_travel_time*self.friction_fudge_factor*self.motor_asymmetry_fudge_factor)
         GPIO.output(self.right_forward_pin, GPIO.LOW)
 
 
@@ -71,8 +71,8 @@ class Motor:
 
         GPIO.output(self.left_forward_pin, GPIO.HIGH)
         GPIO.output(self.right_reverse_pin, GPIO.HIGH)
-        time.sleep(self.turn_time*self.friction_fudge_factor*(1 + self.motor_asymmetry_fudge_factor))
-        #time.sleep(self.turn_time*self.friction_fudge_factor)
+        #time.sleep(self.turn_time*self.friction_fudge_factor*(1 + self.motor_asymmetry_fudge_factor))
+        time.sleep(self.turn_time*self.friction_fudge_factor)
         GPIO.output(self.left_forward_pin, GPIO.LOW)
         GPIO.output(self.right_reverse_pin, GPIO.LOW)
 

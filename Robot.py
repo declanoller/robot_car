@@ -34,8 +34,9 @@ class Robot:
         '''
 
         self.init_time = fst.getCurTimeObj()
-
+        self.r = 0
         self.initial_iteration = kwargs.get('initial_iteration', 0)
+        self.iteration = self.initial_iteration
 
         #GPIO Mode (BOARD / BCM)
         GPIO.cleanup()
@@ -97,6 +98,11 @@ class Robot:
         if self.motor_enable:
             self.motor = Motor(left_forward_pin=32, left_reverse_pin=33, right_forward_pin=35, right_reverse_pin=37)
             print('Motor object created.')
+            #Here, the 4 actions will be, in order: forward (F), backward (B), CCW, clockwise turn (CW)
+            self.N_actions = 4
+            # This determines the order of the action indices (i.e., 0 is straight, 1 is backward, etc)
+            self.action_func_list = [self.motor.goStraight, self.motor.goBackward, self.motor.turn90CCW, self.motor.turn90CW]
+
 
 
         if self.sonar_enable:
@@ -133,7 +139,9 @@ class Robot:
             # Using daemon=True will cause this thread to die when the main program dies.
             print('creating compass read loop thread...')
             self.df.writeToDebug('creating compass read loop thread...')
-            self.compass_read_thread = threading.Thread(target=self.compass.readCompassLoop, kwargs={'test_time':'forever', }, daemon=True)
+            self.compass_read_thread = threading.Thread(target=self.compass.readCompassLoop,
+            kwargs={'test_time':'forever', },
+            daemon=True)
             print('starting compass read loop thread...')
             self.df.writeToDebug('starting compass read loop thread...')
             self.compass_read_thread.start()
@@ -144,19 +152,30 @@ class Robot:
 
         if self.arena_mode:
 
-            # All units here are in meters.
+            # All units here are in meters, and with respect to the origin being
+            # in the center of the arena.
+            self.N_pos_attempts = 5
             self.wall_length = 1.25
             self.xlims = np.array([-self.wall_length/2, self.wall_length/2])
             self.ylims = np.array([-self.wall_length/2, self.wall_length/2])
             self.position = np.array([0.5*(max(self.xlims) + min(self.xlims)), 0.5*(max(self.ylims) + min(self.ylims))])
+            self.last_position = self.position
             self.bottom_corner = np.array([self.xlims[0], self.ylims[0]])
             self.lims = np.array((self.xlims,self.ylims))
             self.robot_draw_rad = self.wall_length/20.0
             self.target_draw_rad = self.robot_draw_rad
 
-            self.dist_meas_percent_tolerance = 0.12
+            self.dist_meas_percent_tolerance = 0.05
 
-            self.target_positions = np.array([[.19, 0], [.55, 0], [self.wall_length, .21], [self.wall_length, .65], [.97, self.wall_length], [.58, self.wall_length], [0, 1.02], [0, .60]])
+            self.target_positions = np.array([
+            [.19, 0],
+            [.55, 0],
+            [self.wall_length, .21],
+            [self.wall_length, .65],
+            [.97, self.wall_length],
+            [.58, self.wall_length],
+            [0, 1.02],
+            [0, .60]])
             # This makes it so the target positions are w.r.t. the origin at the center.
             self.target_positions = np.array([self.cornerOriginToCenterOrigin(pos) for pos in self.target_positions])
             #These will be the positions in meters, where (0,0) is the center of the arena.
@@ -184,19 +203,15 @@ class Robot:
 
             else:
                 # In this case, we're just gonna give the reward directly, based on its distance.
-                self.reward_distance_thresh = 0.3
+                self.reward_distance_thresh = 0.2
                 self.valid_targets = np.array(list(range(8)))
 
 
             self.resetStateValues()
+            self.N_state_terms = len(self.getStateVec())
+            print('Robot has a state vec of length: ', self.N_state_terms)
 
-        #Here, the 4 actions will be, in order: forward (F), backward (B), CCW, clockwise turn (CW)
-        self.N_actions = 4
-        # This determines the order of the action indices (i.e., 0 is straight, 1 is backward, etc)
-        self.action_func_list = [self.motor.goStraight, self.motor.goBackward, self.motor.turn90CCW, self.motor.turn90CW]
 
-        self.N_state_terms = len(self.getStateVec())
-        print('Robot has a state vec of length: ', self.N_state_terms)
 
 
 
@@ -231,7 +246,17 @@ class Robot:
 
         self.df.writeToDebug('********************* In function: iterate()')
         if self.arena_mode:
-            iter_str = 'iterate() {}, elapsed time=({}). R_avg={:.4f} --> act={}. pos=({:.2f}, {:.2f}), angle={:.2f}, target={}, targets={}'.format(self.iteration, fst.getTimeDiffStr(self.init_time), self.R_tot/max(1, self.iteration), action, self.position[0], self.position[1], self.angle, self.current_target, [int(x) for x in self.getTriggerList()])
+            iter_str = 'iterate() {}, elapsed time=({}). R_avg={:.4f} --> act={}. pos=({:.2f}, {:.2f}), angle={:.2f}, target={}, targets={}'.format(
+            self.iteration,
+            fst.getTimeDiffStr(self.init_time),
+            self.R_tot/max(1, self.iteration),
+            action,
+            self.position[0],
+            self.position[1],
+            self.angle,
+            self.current_target,
+            [int(x) for x in self.getTriggerList()])
+
             self.df.writeToDebug(iter_str)
             self.print(iter_str)
             iter_dict = {}
@@ -247,14 +272,14 @@ class Robot:
         self.df.writeToDebug('did action {}'.format(action))
 
         if self.arena_mode:
-            self.df.writeToDebug('getting reward...')
-            r = self.reward()
-            self.R_tot += r
-            self.df.writeToDebug('got reward {}.'.format(r))
-            self.df.writeToDebug('adding to hist...')
+            #self.df.writeToDebug('getting reward...')
+            self.r = self.reward()
+            self.R_tot += self.r
+            #self.df.writeToDebug('got reward {}.'.format(r))
+            #self.df.writeToDebug('adding to hist...')
             self.addToHist()
-            self.df.writeToDebug('added. Return (r, getStateVec())')
-            return(r, self.getStateVec())
+            #self.df.writeToDebug('added. Return (r, getStateVec())')
+            return(self.r, self.getStateVec())
 
 
 
@@ -354,7 +379,8 @@ class Robot:
 
 
     def resetTarget(self):
-        other_targets = [i for i in self.valid_targets if i!=self.current_target]
+        # This makes it so it won't give it one of the adjacent targets either.
+        other_targets = [i for i in self.valid_targets if (i!=self.current_target and (i != (self.current_target-1)%self.N_targets) and (i != (self.current_target+1)%self.N_targets))]
         self.current_target = random.choice(other_targets)
         self.current_target_pos = self.target_positions[self.current_target]
         self.print('Target reset in resetTarget(). Current target is now {}.'.format(self.current_target))
@@ -388,6 +414,17 @@ class Robot:
         self.action_func_list[action]()
 
 
+    def angleToPiBds(self, ang):
+
+        # Just converts any angle to its equivalent in [-pi, pi] bounds.
+
+        ang = ang%(2*pi) # This will make it into [0, 2*pi] bds
+        if ang > pi:
+            return(ang - 2*pi)
+        else:
+            return(ang)
+
+
     def touchingSameWall(self, a, a_theta, b, b_theta):
         #This tests if two vectors are touching the same wall, i.e, either of their coords are the same.
         #If any are, then it returns the coord and the index of it. Otherwise, returns None.
@@ -397,17 +434,19 @@ class Robot:
         x1 = a*cos(a_theta)
         x2 = b*cos(b_theta)
         #print('x1={:.4f}, x2={:.4f}, norm diff={}'.format(x1,x2, abs((x1 - x2)/(0.5*(x1 + x2)))))
-        same_coord_acc_x = abs((x1 - x2)/self.wall_length)
+        #same_coord_acc_x = abs((x1 - x2)/self.wall_length)
+        same_coord_error_x = abs(x1 - x2)/(0.5*(abs(x1) + abs(x2)))
 
         #y
         y1 = a*sin(a_theta)
         y2 = b*sin(b_theta)
-        same_coord_acc_y = abs((y1 - y2)/self.wall_length)
+        #same_coord_error_y = abs((y1 - y2)/self.wall_length)
+        same_coord_error_y = abs(y1 - y2)/(0.5*(abs(y1) + abs(y2)))
 
-        if same_coord_acc_x < same_coord_acc_y:
-            return(x1, 0, same_coord_acc_x)
+        if same_coord_error_x < same_coord_error_y:
+            return(x1, 0, same_coord_error_x)
         else:
-            return(y1, 1, same_coord_acc_y)
+            return(y1, 1, same_coord_error_y)
 
 
     def touchingOppWall(self, a, a_theta, b, b_theta):
@@ -419,27 +458,103 @@ class Robot:
         x1 = a*cos(a_theta)
         x2 = b*cos(b_theta)
         span_x = abs(x1 - x2)
+        #span_x = abs(x1) + abs(x2)
         #print('span x={}'.format(span))
         #if abs((span - self.wall_length)/(0.5*(span + self.wall_length))) < self.dist_meas_percent_tolerance:
-        span_accuracy_x = abs((span_x - self.wall_length)/self.wall_length)
+        span_error_x = abs((span_x - self.wall_length)/self.wall_length)
 
         #y
         y1 = a*sin(a_theta)
         y2 = b*sin(b_theta)
         span_y = abs(y1 - y2)
-        span_accuracy_y = abs((span_y - self.wall_length)/self.wall_length) # Lower is better
+        #span_y = abs(y1) + abs(y2)
+        span_error_y = abs((span_y - self.wall_length)/self.wall_length) # Lower is better
 
-        if span_accuracy_x < span_accuracy_y:
+        if span_error_x < span_error_y:
             if x1 < 0:
-                return(-x1, 0, span_accuracy_x)
+                if abs(x1) < abs(x2):
+                    return(-x1, 0, span_error_x)
+                else:
+                    return(self.wall_length - x2, 0, span_error_x)
             else:
-                return(-x2, 0, span_accuracy_x)
+                if abs(x1) < abs(x2):
+                    return(self.wall_length - x1, 0, span_error_x)
+                else:
+                    return(-x2, 0, span_error_x)
         else:
             if y1 < 0:
-                return(-y1, 1, span_accuracy_y)
+                if abs(y1) < abs(y2):
+                    return(-y1, 1, span_error_y)
+                else:
+                    return(self.wall_length - y2, 1, span_error_y)
             else:
-                return(-y2, 1, span_accuracy_y)
+                if abs(y1) < abs(y2):
+                    return(self.wall_length - y1, 1, span_error_y)
+                else:
+                    return(-y2, 1, span_error_y)
 
+
+    def posAngleToCollideVec(self, pos, ang):
+        #
+        # This takes a proposed position and angle, and returns the vector
+        # that would collide with the wall it would hit at that angle.
+        #
+        # This assumes *lower left* origin coords.
+        #
+        # The angle bds here are the 4 angle bounds that determine
+        # for a given x,y which wall the ray in that direction would collide with.
+        # The order is: top wall, left wall, bottom wall, right wall
+
+        ang = self.angleToPiBds(ang)
+
+        x, y = pos
+
+        angle_bds = [
+        np.arctan2(self.wall_length-y, self.wall_length-x),
+        np.arctan2(self.wall_length-y, -x),
+        np.arctan2(-y, -x),
+        np.arctan2(-y, self.wall_length-x),
+        ]
+
+        ray_x, ray_y = 0, 0
+
+        if (ang >= angle_bds[0]) and (ang < angle_bds[1]):
+            ray_y = self.wall_length - y
+            if abs(ang) > 0.1 :
+                ray_x = ray_y/tan(ang) #, self.wall_length*np.sign(tan(ang)))
+            else:
+                if np.sign(tan(ang)) > 0:
+                    ray_x = self.wall_length - x
+                else:
+                    ray_x = -x
+
+        elif (ang >= angle_bds[1]) or (ang < angle_bds[2]):
+            ray_x = -x
+            ray_y = ray_x*tan(ang)
+
+        elif (ang >= angle_bds[2]) and (ang < angle_bds[3]):
+            ray_y = -y
+            if abs(ang) > 0.1 :
+                ray_x = ray_y/tan(ang) #, self.wall_length*np.sign(tan(ang)))
+            else:
+                if np.sign(tan(ang)) > 0:
+                    ray_x = self.wall_length - x
+                else:
+                    ray_x = -x
+
+        elif (ang >= angle_bds[3]) and (ang < angle_bds[0]):
+            ray_x = self.wall_length - x
+            ray_y = ray_x*tan(ang)
+
+        return(np.array([ray_x, ray_y]))
+
+
+    def formatPosTuple(self, tup):
+
+        if tup is None:
+            return(None)
+        else:
+            return('({:.3f}, {}, {:.3f})'.format(*tup))
 
 
     def cornerOriginToCenterOrigin(self, pos):
@@ -471,155 +586,136 @@ class Robot:
         # Here, it will return the coords where the origin is the center of the arena.
         #
         #
+
+
+        d1_vec = d1*np.array([cos(theta + 0), sin(theta + 0)])
+        d2_vec = d2*np.array([cos(theta + pi/2), sin(theta + pi/2)])
+        d3_vec = d3*np.array([cos(theta - pi/2), sin(theta - pi/2)])
+
         pair12 = [d1, theta, d2, theta + pi/2]
         pair23 = [d2, theta + pi/2, d3, theta - pi/2]
         pair13 = [d1, theta, d3, theta - pi/2]
 
         pair12_same = self.touchingSameWall(*pair12)
-         # 2 and 3 should never be able to hit the same wall... and it makes trouble when they hit opposite walls at the same height!
-        #pair23_same = self.touchingSameWall(*pair23)
-        pair23_same = None
         pair13_same = self.touchingSameWall(*pair13)
-
 
         pair12_opp = self.touchingOppWall(*pair12)
         pair23_opp = self.touchingOppWall(*pair23)
         pair13_opp = self.touchingOppWall(*pair13)
 
-        self.df.writeToDebug('Same walls: pair12_same={}, pair23_same={}, pair13_same={}'.format(pair12_same, pair23_same, pair13_same))
-        self.df.writeToDebug('Opp walls: pair12_opp={}, pair23_opp={}, pair13_opp={}'.format(pair12_opp, pair23_opp, pair13_opp))
+        self.df.writeToDebug('Same walls: pair12_same={}, pair13_same={}'.format(
+        self.formatPosTuple(pair12_same),
+        self.formatPosTuple(pair13_same)))
+        self.df.writeToDebug('Opp walls: pair12_opp={}, pair23_opp={}, pair13_opp={}'.format(
+        self.formatPosTuple(pair12_opp),
+        self.formatPosTuple(pair23_opp),
+        self.formatPosTuple(pair13_opp)))
 
-        same_accs = [('12', pair12_same), ('13', pair13_same)]
-        opp_accs = [('12', pair12_opp), ('23', pair23_opp), ('13', pair13_opp)]
+        self.df.writeToDebug('\n')
+        self.df.writeToDebug('d1: ({:.3f}, {:.3f}), d2: ({:.3f}, {:.3f}), d3: ({:.3f}, {:.3f})\n'.format(*d1_vec, *d2_vec, *d3_vec))
 
-        # This should sort for the lowest accuracy returned in the tuple.
-        best_acc_tuple_same = sorted(same_accs, key=lambda x: x[1][2])[0]
-        best_acc_tuple_opp = sorted(opp_accs, key=lambda x: x[1][2])[0]
-
-        best_acc_same = best_acc_tuple_same[1][2]
-        best_acc_opp = best_acc_tuple_opp[1][2]
-
-        self.df.writeToDebug('Best accuracy, same wall: {}'.format(best_acc_tuple_same))
-        self.df.writeToDebug('Best accuracy, opp wall: {}'.format(best_acc_tuple_opp))
-
-        sol = np.array([0.0, 0.0])
-
-
-        best_acc_percent_diff = abs(best_acc_same - best_acc_opp)
-
-        if best_acc_percent_diff < self.dist_meas_percent_tolerance:
-            same, opp = True, True
-            self.df.writeToDebug('Percent diff between best accs, {:.3f}, is smaller than tolerance {:.3f}, touching same AND opp walls'.format(best_acc_percent_diff, self.dist_meas_percent_tolerance))
-        else:
-            if best_acc_same < best_acc_opp:
-                same, opp = True, False
-                self.df.writeToDebug('Best same acc is better than best opp acc, touching only same wall')
-            else:
-                same, opp = False, True
-                self.df.writeToDebug('Best opp acc is better than best same acc, touching only opp wall')
+        errors = [
+        ('12', pair12_same, 'same'),
+        ('13', pair13_same, 'same'),
+        ('12', pair12_opp, 'opp'),
+        ('23', pair23_opp, 'opp'),
+        ('13', pair13_opp, 'opp')
+        ]
 
 
-        if (same and not opp) or (opp and not same):
-            if same and not opp:
-                #self.df.writeToDebug('Touching same wall: pair12_same={}, pair23_same={}, pair13_same={}'.format(pair12_same, pair23_same, pair13_same))
+        pos_err_list = []
 
-                dist, coord, acc = best_acc_tuple_same[1]
+        for err in errors:
 
-                if best_acc_tuple_same[0] == '12':
-                    other_ray = [d3*cos(theta - pi/2), d3*sin(theta - pi/2)]
+            sol = -self.bottom_corner # Puts it at (.65, .65), lower left origin (so center of arena)
+            pair_label = err[0]
+            dist, coord, acc = err[1]
+            match_label = err[2]
 
-                if best_acc_tuple_same[0] == '23':
-                    other_ray = [d1*cos(theta), d1*sin(theta)]
-
-                if best_acc_tuple_same[0] == '13':
-                    other_ray = [d2*cos(theta + pi/2), d2*sin(theta + pi/2)]
-
+            self.df.writeToDebug('----------  {}, {}\t{}'.format(pair_label, match_label, self.formatPosTuple(err[1])))
+            if match_label == 'same':
                 #Sets the coordinate we've figured out.
                 if dist>=0:
                     sol[coord] = self.wall_length - dist
                 else:
                     sol[coord] = -dist
 
-            if opp and not same:
-                #This means that no two touch the same wall.
-                #print('opp walls, not the same')
-                #self.df.writeToDebug('Touching opp wall: pair12_opp={}, pair23_opp={}, pair13_opp={}'.format(pair12_opp, pair23_opp, pair13_opp))
-
-                dist, coord, acc = best_acc_tuple_opp[1]
-
-                if best_acc_tuple_opp[0] == '12':
-                    other_ray = [d3*cos(theta - pi/2), d3*sin(theta - pi/2)]
-
-                if best_acc_tuple_opp[0] == '23':
-                    other_ray = [d1*cos(theta), d1*sin(theta)]
-
-                if best_acc_tuple_opp[0] == '13':
-                    other_ray = [d2*cos(theta + pi/2), d2*sin(theta + pi/2)]
-
+            if match_label == 'opp':
                 #The dist should already be positive.
                 sol[coord] = dist
+
+
+            if pair_label == '12':
+                other_ray = d3_vec
+
+            if pair_label == '23':
+                other_ray = d1_vec
+
+            if pair_label == '13':
+                other_ray = d2_vec
 
             #This is the other coord we don't have yet, which works for either case.
             other_coord = abs(1 - coord)
             other_dist = other_ray[other_coord]
 
-            self.df.writeToDebug('dist={:.3f}, coord={}, other_coord={}, other_ray=({:.3f}, {:.3f})'.format(dist, coord, other_coord, other_ray[0], other_ray[1]))
+            self.df.writeToDebug('dist={:.3f}, coord={}, other_coord={}, other_ray=({:.3f}, {:.3f})'.format(dist, coord, other_coord, *other_ray))
 
             if other_dist>=0:
                 sol[other_coord] = self.wall_length - other_dist
             else:
                 sol[other_coord] = -other_dist
 
+            d1_collide_vec = self.posAngleToCollideVec(sol, theta + 0)
+            d2_collide_vec = self.posAngleToCollideVec(sol, theta + pi/2)
+            d3_collide_vec = self.posAngleToCollideVec(sol, theta - pi/2)
+
+            self.df.writeToDebug('d1_col: ({:.3f}, {:.3f}), d2_col: ({:.3f}, {:.3f}), d3_col: ({:.3f}, {:.3f})'.format(
+            *d1_collide_vec, *d2_collide_vec, *d3_collide_vec))
+
+            # Right now just adding theirs norms... might be a better way of doing
+            # this but this seems to work for now.
+            tot_err = np.linalg.norm(d1_vec - d1_collide_vec) + np.linalg.norm(d2_vec - d2_collide_vec) + np.linalg.norm(d3_vec - d3_collide_vec)
+
+            '''tot_err = sum([
+                        np.linalg.norm(d1_vec - d1_collide_vec)/max(0.001, np.linalg.norm(d1_collide_vec)),
+                        np.linalg.norm(d2_vec - d2_collide_vec)/max(0.001, np.linalg.norm(d2_collide_vec)),
+                        np.linalg.norm(d3_vec - d3_collide_vec)/max(0.001, np.linalg.norm(d3_collide_vec))
+                        ])'''
+
             pos = self.cornerOriginToCenterOrigin(sol)
-            self.df.writeToDebug('pos. calcd in calcPosition=({:.3f}, {:.3f})'.format(pos[0], pos[1]))
-            return(pos)
+            pos_err_list.append([pos, tot_err, pair_label, match_label])
+
+            self.df.writeToDebug('{}, {} finds: pos ({:.3f}, {:.3f}), err ({:.3f})'.format(
+                                                                            pair_label,
+                                                                            match_label,
+                                                                            *pos,
+                                                                            tot_err))
+
+        self.df.writeToDebug('\n')
+
+        lowest_error_tuple = min(pos_err_list, key=lambda x: x[1])
+        self.df.writeToDebug('Pos ({:.3f}, {:.3f}) has lowest err ({:.3f}) with {}, {}'.format(
+                                                                        *(lowest_error_tuple[0]),
+                                                                        lowest_error_tuple[1],
+                                                                        lowest_error_tuple[2],
+                                                                        lowest_error_tuple[3]))
+
+        pos = lowest_error_tuple[0]
+        self.df.writeToDebug('pos. calcd in calcPosition=({:.3f}, {:.3f})'.format(*pos))
+        return(pos)
 
 
-        if same and opp:
-            #print('unsolvable case, touching same wall and spanning. Attempting best guess')
-            #self.df.writeToDebug('Touching same AND opp walls.')
 
-            dist, coord, acc = best_acc_tuple_same[1]
+    def coordInBds(self, coord):
+        # This calculates if an (x,y) np array is in the bounds (plus a little margin)
+        # of the arena, with center origin coords. (So, it will consider (0.7, 0.1) to be
+        # in bounds even though it's technically out.)
+        if abs(coord[0]) > 1.1*self.wall_length/2:
+            return(False)
+        if abs(coord[1]) > 1.1*self.wall_length/2:
+            return(False)
 
-            if best_acc_tuple_same[0] == '12':
-                other_ray = [d3*cos(theta - pi/2), d3*sin(theta - pi/2)]
-
-            if best_acc_tuple_same[0] == '23':
-                other_ray = [d1*cos(theta), d1*sin(theta)]
-
-            if best_acc_tuple_same[0] == '13':
-                other_ray = [d2*cos(theta + pi/2), d2*sin(theta + pi/2)]
-
-            #Sets the coordinate we've figured out.
-            if dist>=0:
-                sol[coord] = self.wall_length - dist
-            else:
-                sol[coord] = -dist
-
-            #That was for the coord you can find out for sure. Now we try to get a good estimate
-            #for the other coord by taking the average of what it could be at the extremes.
-
-            #This is the other coord we don't have yet.
-            other_coord = abs(1 - coord)
-
-            other_coord_vals = [[d1*cos(theta), d1*sin(theta)][other_coord],
-                                [d2*cos(theta + pi/2), d2*sin(theta + pi/2)][other_coord],
-                                [d3*cos(theta - pi/2), d3*sin(theta - pi/2)][other_coord]]
-
-            #these are how far below and above x and y the rays are.
-            #I think below_margin HAS to be negative, and above has to be positive.
-            below_margin = min(other_coord_vals)
-            above_margin = max(other_coord_vals)
-
-            sol[other_coord] = (-below_margin + (self.wall_length - above_margin + below_margin)/2.0)
-            pos = self.cornerOriginToCenterOrigin(sol)
-            self.df.writeToDebug('pos. calcd in calcPosition=({:.3f}, {:.3f})'.format(pos[0], pos[1]))
-            return(pos)
-
-
-        # This is if something is wrong and it can't figure out the position.
-        self.df.writeToDebug('Couldnt calc position based on meas., returning default val of (0,0) (in center origin coords).')
-        return(sol)
+        return(True)
 
 
     def getPosition(self):
@@ -629,15 +725,30 @@ class Robot:
         assert self.distance_meas_enable, 'No distance sensors enabled! exiting.'
         assert self.compass_enable, 'No compass! exiting.'
 
-        d1, d2, d3 = self.getDistanceMeas()
+        for attempt in range(self.N_pos_attempts):
 
-        compass_reading = self.getCompassDirection() #From now on, the function will prepare and scale everything.
+            self.df.writeToDebug('Attempt #{}...'.format(attempt))
+            d1, d2, d3 = self.getDistanceMeas()
 
-        self.df.writeToDebug('Raw measurements: d1={:.3f}, d2={:.3f}, d3={:.3f}, angle={:.3f}'.format(d1, d2, d3, compass_reading))
+            compass_reading = self.getCompassDirection() #From now on, the function will prepare and scale everything.
 
-        self.position = self.calculatePosition(d1, d2, d3, compass_reading)
-        self.angle = compass_reading
+            self.df.writeToDebug('Raw measurements: d1={:.3f}, d2={:.3f}, d3={:.3f}, angle={:.3f}'.format(d1, d2, d3, compass_reading))
 
+            self.position = self.calculatePosition(d1, d2, d3, compass_reading)
+            self.angle = compass_reading
+
+            if self.coordInBds(self.position):
+                return(self.position, compass_reading)
+            else:
+                self.df.writeToDebug('Calculated position ({:.3f}, {:.3f}) is out of bounds!!'.format(*self.position))
+
+        #get_pos_str = '\n\n\nTried {} attempts in getPos(), all failed. Exiting now, see what happened.\n\n'.format(self.N_pos_attempts)
+        get_pos_str = '\n\n\nTried {} attempts in getPos(), all failed. Using (0,0).\n\n'.format(self.N_pos_attempts)
+        print(get_pos_str)
+        self.df.writeToDebug(get_pos_str)
+
+        #raise Exception('In getPosition(): {}'.format(get_pos_str))
+        self.position = np.array([0,0])
         return(self.position, compass_reading)
 
 
@@ -706,7 +817,7 @@ class Robot:
         d3 = self.TOF_right.distance() + right_sensor_offset
 
         if self.arena_mode:
-            max_dist = self.wall_length*1.4
+            max_dist = self.wall_length*1.3
         else:
             max_dist = 1000000
         return(min(d1, max_dist), min(d2, max_dist), min(d3, max_dist))
@@ -922,7 +1033,7 @@ class Robot:
 
         if self.MQTT_enable:
             self.df.writeToDebug('Getting IR target info...')
-            reading_str = ' '.join(self.pollTargetServer())
+            reading_str = ' '.join(self.getTriggerList())
             IR_read = 'IR target reading:  ' + reading_str
             self.df.writeToDebug('Got IR target info: {}'.format(reading_str))
             stdscr.addstr(8, 0,  IR_read)
@@ -945,7 +1056,8 @@ class Robot:
         self.angle_hist = np.concatenate((self.angle_hist, [self.angle]))
         self.iterations = np.concatenate((self.iterations, [self.iteration]))
         self.t = np.concatenate((self.t, [time.time() - self.start_time]))
-        self.r_hist = np.concatenate((self.r_hist, [self.reward()]))
+        self.r_hist = np.concatenate((self.r_hist, [self.r]))
+        # Only use self.r right after you've set self.r = self.reward()
         self.action_hist = np.concatenate((self.action_hist, [self.last_action]))
         self.target_hist = np.concatenate((self.target_hist, [self.current_target]))
 

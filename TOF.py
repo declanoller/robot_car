@@ -1,6 +1,8 @@
 import time
 import RPi.GPIO as GPIO
 import VL53L0X
+from scipy.interpolate import interp1d
+import numpy as np
 
 class TOF:
 
@@ -27,6 +29,9 @@ class TOF:
         #self.tof.start_ranging(VL53L0X.Vl53l0xAccuracyMode.BETTER)
         self.timing = max(self.tof.get_timing(), 20000)/1000000.00
 
+        ideal_dist = np.array([-10.0, 0.0, 80.0, 90.0, 100.0, 110.0, 120.0, 130.0, 140.0, 10000])/100.0
+        meas_dist = np.array([-10.0, 0.0, 80.0, 87.0, 97.0, 105.0, 112.0, 120.0, 130.0, 10000])/100.0
+        self.dist_correct = interp1d(meas_dist, ideal_dist, kind='linear')
         #print('distance right after creation: ', self.distance())
 
 
@@ -42,7 +47,8 @@ class TOF:
     def distance(self):
         # get_distance returns it in mm.
         time.sleep(self.timing)
-        return(self.tof.get_distance()/1000.0)
+        mm_dist = self.tof.get_distance()/1000.0
+        return(self.dist_correct(mm_dist))
 
 
     def distanceTestLoop(self, test_time=10):

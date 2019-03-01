@@ -91,11 +91,10 @@ class RobotTools:
             self.run_params['fname_notes'] = kwargs.get('fname_notes', '')
             self.run_params['datetime_str'] = fst.getDateString()
             self.run_params['base_dir'] = kwargs.get('base_dir', 'misc_runs')
-            self.run_params['save_params_to_file'] = False
             self.run_params['resume_dir'] = fst.combineDirAndFile(self.run_params['base_dir'], 'Robot_{}_{}'.format(self.run_params['fname_notes'], self.run_params['datetime_str']))
 
-            self.run_params['save_params_to_file'] = False
-            self.run_params['debug_enable'] = False
+            self.run_params['save_params_to_file'] = 0
+            self.run_params['debug_enable'] = kwargs.get('debug_enable', 0)
 
             self.createStartingDirs()
 
@@ -152,7 +151,7 @@ class RobotTools:
 
         for current_chunk in range(start_chunk, end_chunk):
 
-            print('\n\n\n<---------------- Starting current chunk {} --------------->\n\n'.format(current_chunk))
+            print('\n\n\n<---------------- Starting current chunk {}/{},\t R_tot/N_iterations = {:.4f} --------------->\n\n'.format(current_chunk, end_chunk, self.agent.R_tot/max(1, self.resume_info['last_iteration_completed'])))
 
             if current_chunk > 0:
                 self.loadAllAgentInfo()
@@ -324,10 +323,7 @@ class RobotTools:
         self.resume_info['next_starting_chunk'] += 1
         self.resume_info['next_starting_iteration'] += self.run_params['N_iterations_per_chunk']
         self.resume_info['last_iteration_completed'] += self.run_params['N_iterations_per_chunk']
-
-        # We start at 0, so you've only actually completed chunk 0 at the end of it.
-        if self.resume_info['last_chunk_completed'] != 0:
-            self.resume_info['last_chunk_completed'] += 1
+        self.resume_info['last_chunk_completed'] += 1 # Now we start at -1 so we can always do it I think?
 
 
 
@@ -340,6 +336,17 @@ class RobotTools:
 
 
 
+
+'''
+
+SCRAP
+
+# We start at 0, so you've only actually completed chunk 0 at the end of it.
+if self.resume_info['last_chunk_completed'] != 0:
+    self.resume_info['last_chunk_completed'] += 1
+
+
+'''
 
 
 
