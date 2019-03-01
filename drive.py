@@ -1,3 +1,5 @@
+import sys
+sys.path.append('./classes')
 from Robot import Robot
 #from Agent import Agent
 

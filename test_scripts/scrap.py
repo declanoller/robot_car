@@ -1,4 +1,43 @@
 
+    def drawState(self, ax):
+
+        ax.clear()
+        ax.set_xlim(tuple(self.xlims))
+        ax.set_ylim(tuple(self.ylims))
+
+        ax.set_xlabel('x')
+        ax.set_ylabel('y')
+        ax.set_aspect('equal')
+
+        puck = plt.Circle(tuple(self.position), self.robot_draw_rad, color='tomato')
+        ax.add_artist(puck)
+
+        if self.current_target is not None:
+            target = plt.Circle(tuple(self.target_positions[self.current_target]), self.target_draw_rad, color='seagreen')
+            ax.add_artist(target)
+
+
+    def plotStateParams(self, axes):
+
+        ax1 = axes[0]
+        ax2 = axes[1]
+        ax3 = axes[2]
+
+        ax1.clear()
+        ax1.plot(self.pos_hist[:,0][-1000:],label='x')
+        ax1.plot(self.pos_hist[:,1][-1000:],label='y')
+        ax1.legend()
+
+        ax2.clear()
+        ax2.plot(self.action_hist[-1000:],label='a')
+        ax2.set_yticks([0,1,2,3])
+        ax2.set_yticklabels(['F','B','CCW','CW'])
+        ax2.legend()
+
+
+        ax3.clear()
+        ax3.plot(self.r_hist[-1000:],label='R')
+        ax3.legend()
 
 
 ### calculatePosition(), 2.24.2019, before edits

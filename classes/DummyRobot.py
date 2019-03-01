@@ -10,10 +10,5 @@ class DummyRobot:
         self.N_state_terms = 5
 
 
-    def getPassedParams(self):
-        return({})
-
-
-
 
 #

@@ -46,7 +46,7 @@ class Agent:
 		self.agent_class_name = self.agent_class.__name__
 		self.agent = self.agent_class(**kwargs)
 
-		self.params = self.agent.getPassedParams()
+		self.params = {}
 
 		#Eventually, it would be good to make it so it only actually adds to the filename
 		#the parameters that were specifically passed to it, and adds the default ones

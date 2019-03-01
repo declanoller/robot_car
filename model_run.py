@@ -1,3 +1,5 @@
+import sys
+sys.path.append('./classes')
 from Agent import Agent
 from Robot import Robot
 import FileSystemTools as fst

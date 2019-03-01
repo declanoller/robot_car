@@ -1,15 +1,17 @@
+import sys
+sys.path.append('./classes')
+
+import FileSystemTools as fst
+from Agent import Agent
+from DummyRobot import DummyRobot
 
 import subprocess as sp
-import FileSystemTools as fst
 import matplotlib.pyplot as plt
 from matplotlib.colors import LinearSegmentedColormap
 from matplotlib.gridspec import GridSpec
 import os
-import glob
 import numpy as np
 import torch
-from Agent import Agent
-from DummyRobot import DummyRobot
 import json
 
 ############################# Get Robot run dir, if it doesn't already have it.
