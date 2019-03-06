@@ -141,6 +141,8 @@ class RobotTools:
 
 
 
+
+
     def run(self):
 
         start_chunk = self.resume_info['next_starting_chunk']
@@ -328,8 +330,8 @@ class RobotTools:
 
 
 
-
-
+    def getResumeDir(self):
+        return(self.run_params['resume_dir'])
 
 
 

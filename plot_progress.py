@@ -13,17 +13,25 @@ import os
 import numpy as np
 import torch
 import json
+import argparse
 
 ############################# Get Robot run dir, if it doesn't already have it.
 ############# In the future, just check for files it doesn't have.
 
-last_target = 2
+
+parser = argparse.ArgumentParser()
+#parser.add_argument('path')
+parser.add_argument('--nofetch', action='store_true', default=False)
+#parser.add_argument('--refreshrate', default=0.5, type=float)
+args = parser.parse_args()
+
 
 remote_hostname = 'pi@192.168.1.240'
 
 #run_dir = 'Robot__22-02-2019_18-15-17'
 #run_dir = 'Robot__24-02-2019_20-17-29'
-run_dir = 'Robot__27-02-2019_19-00-16'
+#run_dir = 'Robot__27-02-2019_19-00-16'
+run_dir = 'Robot__02-03-2019_14-19-38'
 
 remote_run_dir_fullpath = fst.combineDirAndFile('/home/pi/robot_car/misc_runs', run_dir)
 remote_resume_file = fst.combineDirAndFile(remote_run_dir_fullpath, 'resume.json')
@@ -53,16 +61,17 @@ else:
     fst.makeDir(NN_dir)
 
 
-#scp_cmd = ['scp', '-r', '{}:{}'.format(remote_hostname, remote_run_dir_fullpath), local_base_dir]
-scp_cmd = ['scp', '{}:{}'.format(remote_hostname, remote_resume_file), local_final_dir]
-print('\n\nCalling scp command to retrieve resume.json...\n\n')
-sp.check_call(scp_cmd)
-print('\n\nFiles transferred.\n')
+if not args.nofetch:
+    #scp_cmd = ['scp', '-r', '{}:{}'.format(remote_hostname, remote_run_dir_fullpath), local_base_dir]
+    scp_cmd = ['scp', '{}:{}'.format(remote_hostname, remote_resume_file), local_final_dir]
+    print('\n\nCalling scp command to retrieve resume.json...\n\n')
+    sp.check_call(scp_cmd)
+    print('\n\nFiles transferred.\n')
 
-scp_cmd = ['scp', '{}:{}'.format(remote_hostname, remote_params_file), local_final_dir]
-print('\n\nCalling scp command to retrieve params.json...\n\n')
-sp.check_call(scp_cmd)
-print('\n\nFiles transferred.\n')
+    scp_cmd = ['scp', '{}:{}'.format(remote_hostname, remote_params_file), local_final_dir]
+    print('\n\nCalling scp command to retrieve params.json...\n\n')
+    sp.check_call(scp_cmd)
+    print('\n\nFiles transferred.\n')
 
 # Get the resume info
 with open(resume_file, 'r') as f:
@@ -295,7 +304,7 @@ for target in range(N_targets):
     ax_best_act = axes_best_act[target]
 
     cm = LinearSegmentedColormap.from_list('my_cm', ['tomato','dodgerblue','seagreen','orange'], N=4)
-    col_plot_bestact = ax_best_act.matshow(best_actions.T, cmap=cm, origin='lower')
+    col_plot_bestact = ax_best_act.matshow(best_actions.T, cmap=cm, origin='lower', vmin=0, vmax=3)
 
     ax_best_act.set_xlabel('x')
     ax_best_act.set_ylabel('y')

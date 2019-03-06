@@ -33,6 +33,8 @@ class Robot:
 
         '''
 
+        self.verbose_level = kwargs.get('verbose_level', 1)
+
         self.init_time = fst.getCurTimeObj()
         self.r = 0
         self.initial_iteration = kwargs.get('initial_iteration', 0)
@@ -40,46 +42,39 @@ class Robot:
 
         #GPIO Mode (BOARD / BCM)
         GPIO.cleanup()
-        #print('GPIO getmode() before set: ', GPIO.getmode())
         GPIO.setmode(GPIO.BOARD)
-        #print('GPIO getmode() after set: ', GPIO.getmode())
 
         self.motor_enable = kwargs.get('motor_enable', True)
-        self.sonar_enable = kwargs.get('sonar_enable', False)
         self.TOF_enable = kwargs.get('TOF_enable', True)
         self.compass_enable = kwargs.get('compass_enable', True)
         self.MQTT_enable = kwargs.get('MQTT_enable', True)
         self.arena_mode = kwargs.get('arena_mode', True)
         self.debug_enable = kwargs.get('debug_enable', True)
 
+        self.df = DebugFile(notes='Trying with TOF sensors', enabled=self.debug_enable)
+        self.date_time_string = self.df.getDateString()
+
         # Set up MQTT first, so it can be passed to DebugFile, for debugging purposes.
         self.comm = None
         if self.MQTT_enable:
             #Compass uses I2C pins, which are 3 (SDA) and 5 (SCL) for the RPi 3.
             self.comm = MQTTComm(broker_address='192.168.1.240')
-            print('MQTTComm object created.')
-            #self.df.writeToDebug('MQTTComm object created.')
-            print('Starting MQTT loop...')
-            #self.df.writeToDebug('Starting MQTT loop...')
+            self.print('MQTTComm object created.', 2)
+            self.print('Starting MQTT loop...', 2)
             self.MQTT_loop_thread = threading.Thread(target=self.comm.startLoop, daemon=True)
             self.MQTT_loop_thread.start()
-            print('MQTT loop started.')
-            #self.df.writeToDebug('MQTT loop started.')
+            self.print('MQTT loop started.', 2)
 
-        self.df = DebugFile(notes='Trying with TOF sensors', mqtt_obj=self.comm, enabled=self.debug_enable)
-        self.date_time_string = self.df.getDateString()
 
-        self.df.writeToDebug('************************* In function: {}()'.format('init'))
+        self.print('************************* In function: {}()'.format('init'), 2)
 
-        self.df.writeToDebug('motor enable: {}'.format(self.motor_enable))
-        self.df.writeToDebug('sonar enable: {}'.format(self.sonar_enable))
-        self.df.writeToDebug('TOF enable: {}'.format(self.TOF_enable))
-        self.df.writeToDebug('compass enable: {}'.format(self.compass_enable))
-        self.df.writeToDebug('MQTT enable: {}'.format(self.MQTT_enable))
+        self.print('motor enable: {}'.format(self.motor_enable), 2)
+        self.print('TOF enable: {}'.format(self.TOF_enable), 2)
+        self.print('compass enable: {}'.format(self.compass_enable), 2)
+        self.print('MQTT enable: {}'.format(self.MQTT_enable), 2)
 
-        self.distance_meas_enable = (self.sonar_enable or self.TOF_enable)
+        self.distance_meas_enable = (self.TOF_enable)
         all_arena_meas_enabled = self.motor_enable and self.distance_meas_enable and self.MQTT_enable and self.compass_enable
-
 
         self.save_hist = kwargs.get('save_hist', False)
         self.quiet = kwargs.get('quiet', False)
@@ -97,24 +92,15 @@ class Robot:
 
         if self.motor_enable:
             self.motor = Motor(left_forward_pin=32, left_reverse_pin=33, right_forward_pin=35, right_reverse_pin=37)
-            print('Motor object created.')
+            self.print('Motor object created.', 2)
             #Here, the 4 actions will be, in order: forward (F), backward (B), CCW, clockwise turn (CW)
             self.N_actions = 4
             # This determines the order of the action indices (i.e., 0 is straight, 1 is backward, etc)
             self.action_func_list = [self.motor.goStraight, self.motor.goBackward, self.motor.turn90CCW, self.motor.turn90CW]
 
 
-
-        if self.sonar_enable:
-            print('Creating sonar objects...')
-            self.sonar_forward = Sonar(GPIO_TRIGGER=10, GPIO_ECHO=8)
-            self.sonar_left = Sonar(GPIO_TRIGGER=24, GPIO_ECHO=22)
-            self.sonar_right = Sonar(GPIO_TRIGGER=18, GPIO_ECHO=16)
-            print('Sonar objects created.')
-
-
         if self.TOF_enable:
-            print('Creating TOF objects...')
+            self.print('Creating TOF objects...', 2)
             self.TOF_forward = TOF(GPIO_SHUTDOWN=8, i2c_address=0x2a)
             self.TOF_left = TOF(GPIO_SHUTDOWN=22, i2c_address=0x2b)
             self.TOF_right = TOF(GPIO_SHUTDOWN=18, i2c_address=0x2c)
@@ -124,9 +110,7 @@ class Robot:
             self.TOF_forward.tofStartRanging()
             self.TOF_left.tofStartRanging()
             self.TOF_right.tofStartRanging()
-            #del self.TOF_forward
-            #self.TOF_forward = TOF(GPIO_SHUTDOWN=8, i2c_address=0x2a)
-            print('TOF objects created.')
+            self.print('TOF objects created.', 2)
 
 
         if self.compass_enable:
@@ -134,19 +118,16 @@ class Robot:
             self.compass_correction_file = kwargs.get('compass_correction_file', None)
 
             self.compass = Compass(compass_correction_file=self.compass_correction_file, pi_max=True, flip_x=True)
-            print('Compass object created.')
+            self.print('Compass object created.', 2)
 
             # Using daemon=True will cause this thread to die when the main program dies.
-            print('creating compass read loop thread...')
-            self.df.writeToDebug('creating compass read loop thread...')
+            self.print('creating compass read loop thread...', 2)
             self.compass_read_thread = threading.Thread(target=self.compass.readCompassLoop,
             kwargs={'test_time':'forever', },
             daemon=True)
-            print('starting compass read loop thread...')
-            self.df.writeToDebug('starting compass read loop thread...')
+            self.print('starting compass read loop thread...', 2)
             self.compass_read_thread.start()
-            print('started.')
-            self.df.writeToDebug('started.')
+            self.print('started.', 2)
 
 
 
@@ -182,7 +163,7 @@ class Robot:
 
             self.N_targets = len(self.target_positions)
             self.current_target = 0
-            print('Current target is: ', self.current_target)
+            self.print('Current target is: {}'.format(self.current_target), 2)
 
             # This determines whether we're going to get the rewards from the IR
             # sensors, or just calc. whether we're close enough in distance.
@@ -198,18 +179,19 @@ class Robot:
                 # Set actual target. Only work if MQTT enabled but we'll only be
                 # here if arena_mode is enabled.
                 test_IR_read = self.pollTargetServer()
-                print('test IR read: ', test_IR_read)
+                self.print('test IR read: {}'.format(test_IR_read), 2)
                 assert len(test_IR_read)==self.N_targets, 'Number of targets ({}) returned from MQTTComm doesn\'t match N_targets ({}) '.format(len(test_IR_read), self.N_targets)
 
             else:
                 # In this case, we're just gonna give the reward directly, based on its distance.
-                self.reward_distance_thresh = 0.2
+                self.reward_distance_thresh = 0.15
                 self.valid_targets = np.array(list(range(8)))
 
+            self.state_type = kwargs.get('state_type', 'position')
 
-            self.resetStateValues()
             self.N_state_terms = len(self.getStateVec())
-            print('Robot has a state vec of length: ', self.N_state_terms)
+            self.resetStateValues()
+            self.print('Robot has a state vec of length: {}'.format(self.N_state_terms), 2)
 
 
 
@@ -223,14 +205,16 @@ class Robot:
         if self.arena_mode:
             target_pos = self.target_positions[self.current_target]
 
-            position, compass_reading = self.getPosition()
-            normed_angle = compass_reading/pi
+            if self.state_type == 'position':
+                position, compass_reading = self.getPosition()
+                normed_angle = compass_reading/pi
+                return(np.concatenate((position, [normed_angle], target_pos)))
+            if self.state_type == 'distances':
+                d1, d2, d3 = self.getDistanceMeas()
+                compass_reading = self.getCompassDirection()
+                normed_angle = compass_reading/pi
+                return(np.concatenate(([d1, d2, d3], [normed_angle], target_pos)))
 
-            #return(np.concatenate((position, [normed_angle], target_pos)))
-            # This will let us use the one trained with velocity, since we don't really
-            # have velocity here.
-            #return(np.concatenate((position, [normed_angle], [0,0], target_pos)))
-            return(np.concatenate((position, [normed_angle], target_pos)))
         else:
             return(np.zeros(5))
 
@@ -238,7 +222,7 @@ class Robot:
 
     def iterate(self, action):
 
-        self.df.writeToDebug('********************* In function: iterate()')
+        self.print('********************* In function: iterate()', 3)
         if self.arena_mode:
             iter_str = 'iterate() {}, elapsed time=({}). R_avg={:.4f} --> act={}. pos=({:.2f}, {:.2f}), angle={:.2f}, target={}, targets={}'.format(
             self.iteration,
@@ -251,28 +235,23 @@ class Robot:
             self.current_target,
             [int(x) for x in self.getTriggerList()])
 
-            self.df.writeToDebug(iter_str)
-            self.print(iter_str)
+            self.print(iter_str, 1)
             iter_dict = {}
             iter_dict['iteration'] = self.iteration
             iter_dict['position'] = self.position.tolist()
-            iter_dict['angle'] = self.angle
-            iter_dict['current_target'] = self.current_target
+            iter_dict['angle'] = float(self.angle)
+            iter_dict['current_target'] = int(self.current_target)
             iter_dict['trigger_list'] = [int(x) for x in self.getTriggerList()]
-            #self.comm.publishIteration(iter_dict)
+            self.comm.publishIteration(iter_dict)
 
         self.doAction(action)
         self.iteration += 1
-        self.df.writeToDebug('did action {}'.format(action))
+        self.print('did action {}'.format(action), 2)
 
         if self.arena_mode:
-            #self.df.writeToDebug('getting reward...')
             self.r = self.reward()
             self.R_tot += self.r
-            #self.df.writeToDebug('got reward {}.'.format(r))
-            #self.df.writeToDebug('adding to hist...')
             self.addToHist()
-            #self.df.writeToDebug('added. Return (r, getStateVec())')
             return(self.r, self.getStateVec())
 
 
@@ -295,8 +274,7 @@ class Robot:
             current_target_triggered = self.targetTriggered(self.current_target)
 
         if current_target_triggered:
-            self.print('Current target {} reached! Calling resetTarget()'.format(self.current_target))
-            self.df.writeToDebug('Current target {} reached! Calling resetTarget()'.format(self.current_target))
+            self.print('Current target {} reached! Calling resetTarget()'.format(self.current_target), 1)
             self.resetTarget()
             return(1.0)
         else:
@@ -304,14 +282,14 @@ class Robot:
 
 
     def initEpisode(self):
-        self.df.writeToDebug('in function initEpisode()')
+        self.print('in function initEpisode()', 2)
         self.resetTarget()
         self.resetStateValues()
 
 
     def resetStateValues(self):
 
-        self.df.writeToDebug('in function resetStateValues()')
+        self.print('in function resetStateValues()', 2)
         self.position, self.angle = self.getPosition()
         self.last_action = 0
         self.iteration = self.initial_iteration
@@ -336,10 +314,10 @@ class Robot:
     def resetTarget(self):
         # This makes it so it won't give it one of the adjacent targets either.
         other_targets = [i for i in self.valid_targets if (i!=self.current_target and (i != (self.current_target-1)%self.N_targets) and (i != (self.current_target+1)%self.N_targets))]
+        #other_targets = [i for i in self.valid_targets if (i!=self.current_target)]
         self.current_target = random.choice(other_targets)
         self.current_target_pos = self.target_positions[self.current_target]
-        self.print('Target reset in resetTarget(). Current target is now {}.'.format(self.current_target))
-        self.df.writeToDebug('Target reset in resetTarget(). Current target is now {}.'.format(self.current_target))
+        self.print('Target reset in resetTarget(). Current target is now {}.'.format(self.current_target), 1)
 
 
     def getTriggerList(self):
@@ -356,7 +334,7 @@ class Robot:
     def pollTargetServer(self):
         mqtt_reading = self.comm.getLatestReadingIR()
         if mqtt_reading is None:
-            self.df.writeToDebug('No mqtt reading, returning all 0.')
+            self.print('No mqtt reading, returning all 0.', 2)
             return(['0']*self.N_targets)
 
         return(mqtt_reading['IR_reading'].split())
@@ -523,7 +501,7 @@ class Robot:
 
     def calculatePosition(self, d1, d2, d3, theta):
 
-        self.df.writeToDebug('************************* In function: {}()'.format('calculatePosition'))
+        self.print('************************* In function: {}()'.format('calculatePosition'), 3)
         #This uses some...possibly sketchy geometry, but I think it should work
         #generally, no matter which direction it's pointed in.
         #
@@ -558,16 +536,16 @@ class Robot:
         pair23_opp = self.touchingOppWall(*pair23)
         pair13_opp = self.touchingOppWall(*pair13)
 
-        self.df.writeToDebug('Same walls: pair12_same={}, pair13_same={}'.format(
+        self.print('Same walls: pair12_same={}, pair13_same={}'.format(
         self.formatPosTuple(pair12_same),
-        self.formatPosTuple(pair13_same)))
-        self.df.writeToDebug('Opp walls: pair12_opp={}, pair23_opp={}, pair13_opp={}'.format(
+        self.formatPosTuple(pair13_same)), 2)
+        self.print('Opp walls: pair12_opp={}, pair23_opp={}, pair13_opp={}'.format(
         self.formatPosTuple(pair12_opp),
         self.formatPosTuple(pair23_opp),
-        self.formatPosTuple(pair13_opp)))
+        self.formatPosTuple(pair13_opp)), 2)
 
-        self.df.writeToDebug('\n')
-        self.df.writeToDebug('d1: ({:.3f}, {:.3f}), d2: ({:.3f}, {:.3f}), d3: ({:.3f}, {:.3f})\n'.format(*d1_vec, *d2_vec, *d3_vec))
+        self.print('\n', 2)
+        self.print('d1: ({:.3f}, {:.3f}), d2: ({:.3f}, {:.3f}), d3: ({:.3f}, {:.3f})\n'.format(*d1_vec, *d2_vec, *d3_vec), 2)
 
         errors = [
         ('12', pair12_same, 'same'),
@@ -587,7 +565,7 @@ class Robot:
             dist, coord, acc = err[1]
             match_label = err[2]
 
-            self.df.writeToDebug('----------  {}, {}\t{}'.format(pair_label, match_label, self.formatPosTuple(err[1])))
+            self.print('----------  {}, {}\t{}'.format(pair_label, match_label, self.formatPosTuple(err[1])), 2)
             if match_label == 'same':
                 #Sets the coordinate we've figured out.
                 if dist>=0:
@@ -613,7 +591,8 @@ class Robot:
             other_coord = abs(1 - coord)
             other_dist = other_ray[other_coord]
 
-            self.df.writeToDebug('dist={:.3f}, coord={}, other_coord={}, other_ray=({:.3f}, {:.3f})'.format(dist, coord, other_coord, *other_ray))
+            self.print('dist={:.3f}, coord={}, other_coord={}, other_ray=({:.3f}, {:.3f})'.format(
+            dist, coord, other_coord, *other_ray), 2)
 
             if other_dist>=0:
                 sol[other_coord] = self.wall_length - other_dist
@@ -624,39 +603,33 @@ class Robot:
             d2_collide_vec = self.posAngleToCollideVec(sol, theta + pi/2)
             d3_collide_vec = self.posAngleToCollideVec(sol, theta - pi/2)
 
-            self.df.writeToDebug('d1_col: ({:.3f}, {:.3f}), d2_col: ({:.3f}, {:.3f}), d3_col: ({:.3f}, {:.3f})'.format(
-            *d1_collide_vec, *d2_collide_vec, *d3_collide_vec))
+            self.print('d1_col: ({:.3f}, {:.3f}), d2_col: ({:.3f}, {:.3f}), d3_col: ({:.3f}, {:.3f})'.format(
+            *d1_collide_vec, *d2_collide_vec, *d3_collide_vec), 2)
 
             # Right now just adding theirs norms... might be a better way of doing
             # this but this seems to work for now.
             tot_err = np.linalg.norm(d1_vec - d1_collide_vec) + np.linalg.norm(d2_vec - d2_collide_vec) + np.linalg.norm(d3_vec - d3_collide_vec)
 
-            '''tot_err = sum([
-                        np.linalg.norm(d1_vec - d1_collide_vec)/max(0.001, np.linalg.norm(d1_collide_vec)),
-                        np.linalg.norm(d2_vec - d2_collide_vec)/max(0.001, np.linalg.norm(d2_collide_vec)),
-                        np.linalg.norm(d3_vec - d3_collide_vec)/max(0.001, np.linalg.norm(d3_collide_vec))
-                        ])'''
-
             pos = self.cornerOriginToCenterOrigin(sol)
             pos_err_list.append([pos, tot_err, pair_label, match_label])
 
-            self.df.writeToDebug('{}, {} finds: pos ({:.3f}, {:.3f}), err ({:.3f})'.format(
+            self.print('{}, {} finds: pos ({:.3f}, {:.3f}), err ({:.3f})'.format(
                                                                             pair_label,
                                                                             match_label,
                                                                             *pos,
-                                                                            tot_err))
+                                                                            tot_err), 2)
 
-        self.df.writeToDebug('\n')
+        self.print('\n', 2)
 
         lowest_error_tuple = min(pos_err_list, key=lambda x: x[1])
-        self.df.writeToDebug('Pos ({:.3f}, {:.3f}) has lowest err ({:.3f}) with {}, {}'.format(
+        self.print('Pos ({:.3f}, {:.3f}) has lowest err ({:.3f}) with {}, {}'.format(
                                                                         *(lowest_error_tuple[0]),
                                                                         lowest_error_tuple[1],
                                                                         lowest_error_tuple[2],
-                                                                        lowest_error_tuple[3]))
+                                                                        lowest_error_tuple[3]), 2)
 
         pos = lowest_error_tuple[0]
-        self.df.writeToDebug('pos. calcd in calcPosition=({:.3f}, {:.3f})'.format(*pos))
+        self.print('pos. calcd in calcPosition=({:.3f}, {:.3f})'.format(*pos), 2)
         return(pos)
 
 
@@ -675,19 +648,20 @@ class Robot:
 
     def getPosition(self):
 
-        self.df.writeToDebug('************************* In function: {}()'.format('getPosition'))
+        self.print('************************* In function: {}()'.format('getPosition'), 2)
 
         assert self.distance_meas_enable, 'No distance sensors enabled! exiting.'
         assert self.compass_enable, 'No compass! exiting.'
 
         for attempt in range(self.N_pos_attempts):
 
-            self.df.writeToDebug('Attempt #{}...'.format(attempt))
+            self.print('Attempt #{}...'.format(attempt), 2)
             d1, d2, d3 = self.getDistanceMeas()
 
             compass_reading = self.getCompassDirection() #From now on, the function will prepare and scale everything.
 
-            self.df.writeToDebug('Raw measurements: d1={:.3f}, d2={:.3f}, d3={:.3f}, angle={:.3f}'.format(d1, d2, d3, compass_reading))
+            self.print('Raw measurements: d1={:.3f}, d2={:.3f}, d3={:.3f}, angle={:.3f}'.format(
+            d1, d2, d3, compass_reading), 2)
 
             self.position = self.calculatePosition(d1, d2, d3, compass_reading)
             self.angle = compass_reading
@@ -695,14 +669,11 @@ class Robot:
             if self.coordInBds(self.position):
                 return(self.position, compass_reading)
             else:
-                self.df.writeToDebug('Calculated position ({:.3f}, {:.3f}) is out of bounds!!'.format(*self.position))
+                self.print('Calculated position ({:.3f}, {:.3f}) is out of bounds!!'.format(*self.position), 2)
 
-        #get_pos_str = '\n\n\nTried {} attempts in getPos(), all failed. Exiting now, see what happened.\n\n'.format(self.N_pos_attempts)
         get_pos_str = '\n\n\nTried {} attempts in getPos(), all failed. Using (0,0).\n\n'.format(self.N_pos_attempts)
-        print(get_pos_str)
-        self.df.writeToDebug(get_pos_str)
+        self.print(get_pos_str, 1)
 
-        #raise Exception('In getPosition(): {}'.format(get_pos_str))
         self.position = np.array([0,0])
         return(self.position, compass_reading)
 
@@ -721,44 +692,9 @@ class Robot:
 
         assert self.distance_meas_enable, 'No distance sensors enabled! exiting.'
 
-        if self.sonar_enable:
-            return(self.getSonarMeas())
-
         if self.TOF_enable:
             return(self.getTOFMeas())
 
-
-    def getSonarMeas(self):
-
-        assert self.sonar_enable, 'Trying to cal getSonarMeas() but sonar not enabled!'
-
-        i = 0
-        attempts = 5
-        delay = 0.01
-        while i<attempts:
-            d1 = self.sonar_forward.distance()
-            time.sleep(delay)
-            d2 = self.sonar_left.distance()
-            time.sleep(delay)
-            d3 = self.sonar_right.distance()
-            time.sleep(delay)
-
-            # 1.5 being a slight overestimation of sqrt(2) here, the max distance
-            # it should be able to measure.
-            if (d1 > self.wall_length*1.5) or (d2 > self.wall_length*1.5) or (d3 > self.wall_length*1.5):
-                i += 1
-                self.df.writeToDebug('Sonar meas. attempt {} failed: d1={:.3f}, d2={:.3f}, d3={:.3f}, retrying'.format(i, d1, d2, d3))
-            else:
-                return(d1, d2, d3)
-
-        d1 = self.sonar_forward.distance()
-        time.sleep(delay)
-        d2 = self.sonar_left.distance()
-        time.sleep(delay)
-        d3 = self.sonar_right.distance()
-        time.sleep(delay)
-        max_dist = self.wall_length*1.5
-        return(min(d1, max_dist), min(d2, max_dist), min(d3, max_dist))
 
 
     def getTOFMeas(self):
@@ -814,27 +750,19 @@ class Robot:
         #test_duration = 2
 
         if self.motor_enable:
-            print('testing motor!')
+            self.print('testing motor!', 1)
             #self.motor.wheelTest(test_time=2)
 
-        if self.sonar_enable:
-            print('testing sonar! (front)')
-            self.sonar_forward.distanceTestLoop(test_time=test_duration)
-            print('testing sonar! (left)')
-            self.sonar_left.distanceTestLoop(test_time=test_duration)
-            print('testing sonar! (right)')
-            self.sonar_right.distanceTestLoop(test_time=test_duration)
-
         if self.TOF_enable:
-            print('testing TOF! (front)')
+            self.print('testing TOF! (front)', 1)
             self.TOF_forward.distanceTestLoop(test_time=test_duration)
-            print('testing TOF! (left)')
+            self.print('testing TOF! (left)', 1)
             self.TOF_left.distanceTestLoop(test_time=test_duration)
-            print('testing TOF! (right)')
+            self.print('testing TOF! (right)', 1)
             self.TOF_right.distanceTestLoop(test_time=test_duration)
 
         if self.compass_enable:
-            print('testing compass!')
+            self.print('testing compass!', 1)
             #Compass uses I2C pins, which are 3 and 5 for the RPi 3.
             self.compass.readCompassLoop(test_time=test_duration, print_readings=True)
 
@@ -842,8 +770,8 @@ class Robot:
     def DCloop(self, stdscr):
         #https://docs.python.org/3/howto/curses.html
         #https://docs.python.org/3/library/curses.html#curses.window.clrtobot
-        self.df.writeToDebug('************************* In function: {}()'.format('DCloop'))
-        self.df.writeToDebug('Size of curses window: LINES={}, COLS={}'.format(curses.LINES, curses.COLS))
+        self.print('************************* In function: {}()'.format('DCloop'), 1)
+        self.print('Size of curses window: LINES={}, COLS={}'.format(curses.LINES, curses.COLS), 1)
         delay_time = 0.1
 
         move_str_pos = [0, 6]
@@ -854,7 +782,7 @@ class Robot:
             c = stdscr.getch()
 
             if c == curses.KEY_LEFT:
-                self.df.writeToDebug('Pressed Left key, turning CCW')
+                self.print('Pressed Left key, turning CCW', 3)
                 self.iterate(2)
                 time.sleep(delay_time)
                 self.drawStandard(stdscr)
@@ -863,7 +791,7 @@ class Robot:
 
 
             if c == curses.KEY_RIGHT:
-                self.df.writeToDebug('Pressed Right key, turning CW')
+                self.print('Pressed Right key, turning CW', 3)
                 self.iterate(3)
                 time.sleep(delay_time)
                 self.drawStandard(stdscr)
@@ -872,7 +800,7 @@ class Robot:
 
 
             if c == curses.KEY_UP:
-                self.df.writeToDebug('Pressed Up key, going straight')
+                self.print('Pressed Up key, going straight', 3)
                 self.iterate(0)
                 time.sleep(delay_time)
                 self.drawStandard(stdscr)
@@ -881,7 +809,7 @@ class Robot:
 
 
             if c == curses.KEY_DOWN:
-                self.df.writeToDebug('Pressed Down key, going backwards')
+                self.print('Pressed Down key, going backwards', 3)
                 self.iterate(1)
                 time.sleep(delay_time)
                 self.drawStandard(stdscr)
@@ -890,7 +818,7 @@ class Robot:
 
 
             if c == ord('r'):
-                self.df.writeToDebug('Pressed r, refreshing')
+                self.print('Pressed r, refreshing', 3)
                 time.sleep(delay_time)
                 self.drawStandard(stdscr)
                 stdscr.addstr(move_str_pos[1], move_str_pos[0], 'Pressed r, refreshing')
@@ -898,7 +826,7 @@ class Robot:
 
 
             elif c == ord('q'):
-                print('you pressed q! exiting')
+                self.print('you pressed q! exiting', 1)
                 break  # Exit the while loop
 
 
@@ -908,9 +836,9 @@ class Robot:
 
 
     def directControl(self):
-        print('entering curses loop')
+        self.print('entering curses loop', 1)
         curses.wrapper(self.DCloop)
-        print('exited curses loop.')
+        self.print('exited curses loop.', 1)
 
 
 
@@ -932,33 +860,33 @@ class Robot:
         arrow_list = ['⮕','⬈','↑','⬉','⟵','⬋','↓','↘']
         angle_ind = int(divmod((angle + pi/8)%(2*pi), pi/4)[0])
         if self.positionPercentOutOfBounds(pos):
-            self.df.writeToDebug('Position PERCENT of box {} out of bounds in redrawBox(), setting to 0.5,0.5 for drawing.'.format(pos))
+            self.print('Position PERCENT of box {} out of bounds in redrawBox(), setting to 0.5,0.5 for drawing.'.format(pos), 3)
             pos = [0.5, 0.5]
         stdscr.addstr(box_coord_y + -1 + (box_side_y - int(pos[1]*box_side_y)), box_coord_x + 1 + int(pos[0]*2*box_side_x), arrow_list[angle_ind])
 
 
     def drawStandard(self, stdscr):
         stdscr.erase()
-        self.df.writeToDebug('************************* In function: {}()'.format('drawStandard'))
+        self.print('************************* In function: {}()'.format('drawStandard'), 3)
 
         if self.distance_meas_enable:
-            self.df.writeToDebug('Getting distance info')
+            self.print('Getting distance info', 3)
             d1, d2, d3 = self.getDistanceMeas()
             info_str = 'Distance meas: (straight = {:.2f}, left = {:.2f}, right = {:.2f})'.format(d1, d2, d3)
-            self.df.writeToDebug(info_str)
+            self.print(info_str, 3)
             stdscr.addstr(0, 0,  info_str)
 
         if self.compass_enable:
-            self.df.writeToDebug('Getting compass info')
+            self.print('Getting compass info', 3)
             compass_reading = self.getCompassDirection() #From now on, the function will prepare and scale everything.
             info_str = 'Compass meas: ({:.2f})'.format(compass_reading)
-            self.df.writeToDebug(info_str)
+            self.print(info_str, 3)
             stdscr.addstr(2, 0,  info_str)
 
 
         if self.arena_mode:
 
-            self.df.writeToDebug('Getting position info')
+            self.print('Getting position info', 3)
 
             #Draw box, with best position guess
             box_side_x = 25
@@ -971,8 +899,8 @@ class Robot:
 
             try:
                 raw_pos, angle = self.getPosition()
-                pos_str = '({:.2f}, {:.2f})'.format(raw_pos[0], raw_pos[1])
-                self.df.writeToDebug('Got position info: {}'.format(pos_str))
+                pos_str = '({:.2f}, {:.2f})'.format(*raw_pos)
+                self.print('Got position info: {}'.format(pos_str), 3)
                 stdscr.addstr(4, 0, 'Estimated position: {}'.format(pos_str))
 
                 box_percent_pos = (raw_pos - self.bottom_corner)/self.wall_length
@@ -981,29 +909,60 @@ class Robot:
                 box_percent_pos = np.array([0.5, 0.5])
                 angle = 0
 
-            self.df.writeToDebug('drawing agent pos (o) at percent ({:.3f}, {:.3f})'.format(box_percent_pos[0], box_percent_pos[1]))
+            self.print('drawing agent pos (o) at percent ({:.3f}, {:.3f})'.format(*box_percent_pos), 3)
             box_info = (box_coord_y, box_coord_x, box_side_y, box_side_x)
             self.redrawBox(stdscr, box_info, box_percent_pos, angle)
 
 
         if self.MQTT_enable:
-            self.df.writeToDebug('Getting IR target info...')
+            self.print('Getting IR target info...', 3)
             reading_str = ' '.join(self.getTriggerList())
             IR_read = 'IR target reading:  ' + reading_str
-            self.df.writeToDebug('Got IR target info: {}'.format(reading_str))
+            self.print('Got IR target info: {}'.format(reading_str), 3)
             stdscr.addstr(8, 0,  IR_read)
 
         stdscr.addstr(curses.LINES - 1, 0,  'Press q or Esc to quit')
 
         stdscr.refresh() #Do this after addstr
-        self.df.writeToDebug('end of drawStandard()\n\n')
+        self.print('end of drawStandard()\n\n', 3)
 
 
     ############ Bookkeeping functions
 
-    def print(self, print_str):
-        if not self.quiet:
+    def print(self, print_str, str_verb_level=2):
+        # This prints and takes the verbosity level into account,
+        # as well as if it should write to the debug file.
+        # This only accepts strings, so don't use it exactly as you'd
+        # use the normal print() function.
+        #
+        # There will be a verbose_level for the whole program, that
+        # the user sets, that determines how much output they want to
+        # see. Then, for each message, there will be a verbose_level
+        # that dictates how important the message is.
+        #
+        # The level the user specifies is such that the higher it is,
+        # the more output they'll see. 0 is seeing nothing, 2 is seeing everything.
+        #
+        # The one you pass to this function determines how important the message is;
+        # str_verb_level=0 means that it will print no matter what (overriding even
+        # the user specified level 0, so use it rarely, just for errors/etc),
+        # and higher up is less important.
+        #
+        # So usually I'll have self.verbose_level=1, and things like the iteration
+        # info will have str_verb_level=1 also, but less important stuff will be 2.
+        # The default for this fn will be 2. Pass it 3 if you want it to never print
+        # the thing, just pass it to writeToDebug().
+
+        if str_verb_level <= self.verbose_level:
             print(print_str)
+
+        try:
+            if self.debug_enable:
+                self.df.writeToDebug(print_str)
+        except:
+            print('something wrong in self.print(), maybe df isnt set up yet?')
+
+
 
 
     def addToHist(self):
@@ -1029,12 +988,12 @@ class Robot:
         np.expand_dims(self.target_hist, axis=1).astype('float32'),
         ), axis=1)
 
-        print('allhist shape: ', all_hist.shape)
+        self.print('allhist shape: {}'.format(all_hist.shape), 1)
         header = '{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}'.format('iter', 't', 'x', 'y', 'ang', 'r', 'action', 'target')
 
         default_fname = 'all_hist_' + self.date_time_string + '.txt'
         fname = kwargs.get('fname', default_fname)
-        print('\nSaving robot hist to', fname)
+        self.print('\nSaving robot hist to {}'.format(fname), 1)
         np.savetxt(fname, all_hist, header=header, fmt='%.3f', delimiter='\t')
 
 
@@ -1044,7 +1003,7 @@ class Robot:
         del self.motor
         time.sleep(0.5)
         if self.TOF_enable:
-            print('\n\nDeleting TOF objects...')
+            self.print('\n\nDeleting TOF objects...', 1)
             del self.TOF_forward
             del self.TOF_left
             del self.TOF_right

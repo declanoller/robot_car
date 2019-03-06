@@ -532,7 +532,8 @@ class Agent:
 
 	def updateFrozenQ(self, iteration):
 
-		if iteration%self.params['target_update']==0 and iteration>self.params['N_batch']:
+		#if iteration%self.params['target_update']==0 and iteration>self.params['N_batch']:
+		if iteration%self.params['target_update']==0:
 			if self.params['features'] == 'DQN':
 				self.target_NN.load_state_dict(self.policy_NN.state_dict())
 			if self.params['features'] == 'AC':

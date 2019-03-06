@@ -1,4 +1,62 @@
 
+
+
+        if self.sonar_enable:
+            print('Creating sonar objects...')
+            self.sonar_forward = Sonar(GPIO_TRIGGER=10, GPIO_ECHO=8)
+            self.sonar_left = Sonar(GPIO_TRIGGER=24, GPIO_ECHO=22)
+            self.sonar_right = Sonar(GPIO_TRIGGER=18, GPIO_ECHO=16)
+            print('Sonar objects created.')
+
+
+
+        if self.sonar_enable:
+            print('testing sonar! (front)')
+            self.sonar_forward.distanceTestLoop(test_time=test_duration)
+            print('testing sonar! (left)')
+            self.sonar_left.distanceTestLoop(test_time=test_duration)
+            print('testing sonar! (right)')
+            self.sonar_right.distanceTestLoop(test_time=test_duration)
+
+
+
+
+
+    def getSonarMeas(self):
+
+        assert self.sonar_enable, 'Trying to cal getSonarMeas() but sonar not enabled!'
+
+        i = 0
+        attempts = 5
+        delay = 0.01
+        while i<attempts:
+            d1 = self.sonar_forward.distance()
+            time.sleep(delay)
+            d2 = self.sonar_left.distance()
+            time.sleep(delay)
+            d3 = self.sonar_right.distance()
+            time.sleep(delay)
+
+            # 1.5 being a slight overestimation of sqrt(2) here, the max distance
+            # it should be able to measure.
+            if (d1 > self.wall_length*1.5) or (d2 > self.wall_length*1.5) or (d3 > self.wall_length*1.5):
+                i += 1
+                self.df.writeToDebug('Sonar meas. attempt {} failed: d1={:.3f}, d2={:.3f}, d3={:.3f}, retrying'.format(i, d1, d2, d3))
+            else:
+                return(d1, d2, d3)
+
+        d1 = self.sonar_forward.distance()
+        time.sleep(delay)
+        d2 = self.sonar_left.distance()
+        time.sleep(delay)
+        d3 = self.sonar_right.distance()
+        time.sleep(delay)
+        max_dist = self.wall_length*1.5
+        return(min(d1, max_dist), min(d2, max_dist), min(d3, max_dist))
+
+
+
+
     def drawState(self, ax):
 
         ax.clear()

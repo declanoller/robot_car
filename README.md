@@ -13,7 +13,7 @@ This is the set of programs and classes I used to have a robot learn the game us
 Main run scripts
 --------------------
 
-These are the main `.py` scripts that I use to run the robot in various ways. They are:
+These are the main `.py` scripts that I use to run the robot in various ways, in the main directory for simplicity. They are:
 
 * `learn.py` - For learning over the course of many episodes that can be interrupted and resumed. Uses `RobotTools.py`.
 * `drive.py` - For simply driving the robot around in real time.
@@ -26,7 +26,7 @@ These are the main `.py` scripts that I use to run the robot in various ways. Th
 Classes
 -----------------------
 
-These are the classes that the run scripts use. I'll list the more "software" ones and then the "hardware" ones that interface with sensors, etc.
+These are the classes that the run scripts use, which live in the classes directory. I'll list the more "software" ones and then the "hardware" ones that interface with sensors, etc.
 
 Software:
 
