@@ -18,6 +18,27 @@ import curses
 
 import traceback as tb
 
+'''
+
+-getPosition() sets self.position, which various things need. It is currently
+called by:
+    -getStateVec() (if calcing position)
+    -iterate()
+    -reward() (if doing software reward)
+    -resetStateValues()
+
+it's somewhat slow (can def notice a diff if you have to call it 10x more), so it
+should only be called when needed, but the most recent value should also be used for
+important things.
+
+self.position is used by:
+    -getStateVec() (if calcing pos)
+    -reward() (if doing software reward)
+    -iterate() (just for display)
+    -addToHist()
+
+
+'''
 
 class Robot:
 
@@ -54,144 +75,28 @@ class Robot:
         self.df = DebugFile(notes='Trying with TOF sensors', enabled=self.debug_enable)
         self.date_time_string = self.df.getDateString()
 
-        # Set up MQTT first, so it can be passed to DebugFile, for debugging purposes.
-        self.comm = None
-        if self.MQTT_enable:
-            #Compass uses I2C pins, which are 3 (SDA) and 5 (SCL) for the RPi 3.
-            self.comm = MQTTComm(broker_address='192.168.1.240')
-            self.print('MQTTComm object created.', 2)
-            self.print('Starting MQTT loop...', 2)
-            self.MQTT_loop_thread = threading.Thread(target=self.comm.startLoop, daemon=True)
-            self.MQTT_loop_thread.start()
-            self.print('MQTT loop started.', 2)
-
+        self.setupMQTT(**kwargs)
 
         self.print('************************* In function: {}()'.format('init'), 2)
-
         self.print('motor enable: {}'.format(self.motor_enable), 2)
         self.print('TOF enable: {}'.format(self.TOF_enable), 2)
         self.print('compass enable: {}'.format(self.compass_enable), 2)
         self.print('MQTT enable: {}'.format(self.MQTT_enable), 2)
 
+        self.save_hist = kwargs.get('save_hist', False)
+
         self.distance_meas_enable = (self.TOF_enable)
         all_arena_meas_enabled = self.motor_enable and self.distance_meas_enable and self.MQTT_enable and self.compass_enable
-
-        self.save_hist = kwargs.get('save_hist', False)
-        self.quiet = kwargs.get('quiet', False)
-
-        # For getting the params passed from Agent, if there are any.
-        self.passed_params = {}
-        check_params = []
-        for param in check_params:
-            if kwargs.get(param, None) is not None:
-                self.passed_params[param] = kwargs.get(param, None)
-
-
         if self.arena_mode:
             assert all_arena_meas_enabled, 'Arena mode enabled, but either motor/dist/MQTT/compass not enabled.'
 
-        if self.motor_enable:
-            self.motor = Motor(left_forward_pin=32, left_reverse_pin=33, right_forward_pin=35, right_reverse_pin=37)
-            self.print('Motor object created.', 2)
-            #Here, the 4 actions will be, in order: forward (F), backward (B), CCW, clockwise turn (CW)
-            self.N_actions = 4
-            # This determines the order of the action indices (i.e., 0 is straight, 1 is backward, etc)
-            self.action_func_list = [self.motor.goStraight, self.motor.goBackward, self.motor.turn90CCW, self.motor.turn90CW]
+        self.setupMotor(**kwargs)
 
+        self.setupTOF(**kwargs)
 
-        if self.TOF_enable:
-            self.print('Creating TOF objects...', 2)
-            self.TOF_forward = TOF(GPIO_SHUTDOWN=8, i2c_address=0x2a)
-            self.TOF_left = TOF(GPIO_SHUTDOWN=22, i2c_address=0x2b)
-            self.TOF_right = TOF(GPIO_SHUTDOWN=18, i2c_address=0x2c)
-            self.TOF_forward.tofOpen()
-            self.TOF_left.tofOpen()
-            self.TOF_right.tofOpen()
-            self.TOF_forward.tofStartRanging()
-            self.TOF_left.tofStartRanging()
-            self.TOF_right.tofStartRanging()
-            self.print('TOF objects created.', 2)
+        self.setupCompass(**kwargs)
 
-
-        if self.compass_enable:
-            #Compass uses I2C pins, which are 3 (SDA) and 5 (SCL) for the RPi 3.
-            self.compass_correction_file = kwargs.get('compass_correction_file', None)
-
-            self.compass = Compass(compass_correction_file=self.compass_correction_file, pi_max=True, flip_x=True)
-            self.print('Compass object created.', 2)
-
-            # Using daemon=True will cause this thread to die when the main program dies.
-            self.print('creating compass read loop thread...', 2)
-            self.compass_read_thread = threading.Thread(target=self.compass.readCompassLoop,
-            kwargs={'test_time':'forever', },
-            daemon=True)
-            self.print('starting compass read loop thread...', 2)
-            self.compass_read_thread.start()
-            self.print('started.', 2)
-
-
-
-        if self.arena_mode:
-
-            # All units here are in meters, and with respect to the origin being
-            # in the center of the arena.
-            self.N_pos_attempts = 5
-            self.wall_length = 1.25
-            self.xlims = np.array([-self.wall_length/2, self.wall_length/2])
-            self.ylims = np.array([-self.wall_length/2, self.wall_length/2])
-            self.position = np.array([0.5*(max(self.xlims) + min(self.xlims)), 0.5*(max(self.ylims) + min(self.ylims))])
-            self.last_position = self.position
-            self.bottom_corner = np.array([self.xlims[0], self.ylims[0]])
-            self.lims = np.array((self.xlims,self.ylims))
-            self.robot_draw_rad = self.wall_length/20.0
-            self.target_draw_rad = self.robot_draw_rad
-
-            self.dist_meas_percent_tolerance = 0.05
-
-            self.target_positions = np.array([
-            [.19, 0],
-            [.55, 0],
-            [self.wall_length, .21],
-            [self.wall_length, .65],
-            [.97, self.wall_length],
-            [.58, self.wall_length],
-            [0, 1.02],
-            [0, .60]])
-            # This makes it so the target positions are w.r.t. the origin at the center.
-            self.target_positions = np.array([self.cornerOriginToCenterOrigin(pos) for pos in self.target_positions])
-            #These will be the positions in meters, where (0,0) is the center of the arena.
-
-            self.N_targets = len(self.target_positions)
-            self.current_target = 0
-            self.print('Current target is: {}'.format(self.current_target), 2)
-
-            # This determines whether we're going to get the rewards from the IR
-            # sensors, or just calc. whether we're close enough in distance.
-            self.reward_method = kwargs.get('reward_method', 'MQTT')
-            if self.reward_method == 'MQTT':
-                #This is in terms of x and y, from the bottom left corner.
-                # This is because right now, #2 isn't working...
-                # These are counting starting from 1
-                self.valid_targets = np.array([1, 2, 3, 6, 8])
-                # This makes it so they're 0 indexed now
-                self.valid_targets -= 1
-
-                # Set actual target. Only work if MQTT enabled but we'll only be
-                # here if arena_mode is enabled.
-                test_IR_read = self.pollTargetServer()
-                self.print('test IR read: {}'.format(test_IR_read), 2)
-                assert len(test_IR_read)==self.N_targets, 'Number of targets ({}) returned from MQTTComm doesn\'t match N_targets ({}) '.format(len(test_IR_read), self.N_targets)
-
-            else:
-                # In this case, we're just gonna give the reward directly, based on its distance.
-                self.reward_distance_thresh = 0.15
-                self.valid_targets = np.array(list(range(8)))
-
-            self.state_type = kwargs.get('state_type', 'position')
-
-            self.N_state_terms = len(self.getStateVec())
-            self.resetStateValues()
-            self.print('Robot has a state vec of length: {}'.format(self.N_state_terms), 2)
+        self.setupArena(**kwargs)
 
 
 
@@ -206,9 +111,9 @@ class Robot:
             target_pos = self.target_positions[self.current_target]
 
             if self.state_type == 'position':
-                position, compass_reading = self.getPosition()
+                self.position, compass_reading = self.getPosition()
                 normed_angle = compass_reading/pi
-                return(np.concatenate((position, [normed_angle], target_pos)))
+                return(np.concatenate((self.position, [normed_angle], target_pos)))
             if self.state_type == 'distances':
                 d1, d2, d3 = self.getDistanceMeas()
                 compass_reading = self.getCompassDirection()
@@ -223,14 +128,14 @@ class Robot:
     def iterate(self, action):
 
         self.print('********************* In function: iterate()', 3)
+        self.getPosition() # just so it has the latest info
         if self.arena_mode:
             iter_str = 'iterate() {}, elapsed time=({}). R_avg={:.4f} --> act={}. pos=({:.2f}, {:.2f}), angle={:.2f}, target={}, targets={}'.format(
             self.iteration,
             fst.getTimeDiffStr(self.init_time),
             self.R_tot/max(1, self.iteration),
             action,
-            self.position[0],
-            self.position[1],
+            *self.position,
             self.angle,
             self.current_target,
             [int(x) for x in self.getTriggerList()])
@@ -242,6 +147,10 @@ class Robot:
             iter_dict['angle'] = float(self.angle)
             iter_dict['current_target'] = int(self.current_target)
             iter_dict['trigger_list'] = [int(x) for x in self.getTriggerList()]
+            iter_dict['d1'] = self.d1
+            iter_dict['d2'] = self.d2
+            iter_dict['d3'] = self.d3
+
             self.comm.publishIteration(iter_dict)
 
         self.doAction(action)
@@ -271,6 +180,7 @@ class Robot:
         if self.reward_method == 'MQTT':
             current_target_triggered = (int(self.pollTargetServer()[self.current_target]) == 1)
         else:
+            self.position, angle = self.getPosition()
             current_target_triggered = self.targetTriggered(self.current_target)
 
         if current_target_triggered:
@@ -657,7 +567,7 @@ class Robot:
 
             self.print('Attempt #{}...'.format(attempt), 2)
             d1, d2, d3 = self.getDistanceMeas()
-
+            self.d1, self.d2, self.d3 = d1, d2, d3
             compass_reading = self.getCompassDirection() #From now on, the function will prepare and scale everything.
 
             self.print('Raw measurements: d1={:.3f}, d2={:.3f}, d3={:.3f}, angle={:.3f}'.format(
@@ -956,11 +866,11 @@ class Robot:
         if str_verb_level <= self.verbose_level:
             print(print_str)
 
-        try:
+        if hasattr(self, 'df'):
             if self.debug_enable:
                 self.df.writeToDebug(print_str)
-        except:
-            print('something wrong in self.print(), maybe df isnt set up yet?')
+        else:
+            print('something wrong in self.print(), either df isnt set up yet or debug_enable=False.')
 
 
 
@@ -996,6 +906,134 @@ class Robot:
         self.print('\nSaving robot hist to {}'.format(fname), 1)
         np.savetxt(fname, all_hist, header=header, fmt='%.3f', delimiter='\t')
 
+
+################################# Setup/delete functions
+
+
+    def setupCompass(self, **kwargs):
+
+        if self.compass_enable:
+            #Compass uses I2C pins, which are 3 (SDA) and 5 (SCL) for the RPi 3.
+            self.compass_correction_file = kwargs.get('compass_correction_file', None)
+
+            self.compass = Compass(compass_correction_file=self.compass_correction_file, pi_max=True, flip_x=True)
+            self.print('Compass object created.', 2)
+
+            # Using daemon=True will cause this thread to die when the main program dies.
+            self.print('creating compass read loop thread...', 2)
+            self.compass_read_thread = threading.Thread(target=self.compass.readCompassLoop,
+            kwargs={'test_time':'forever', },
+            daemon=True)
+            self.print('starting compass read loop thread...', 2)
+            self.compass_read_thread.start()
+            self.print('started.', 2)
+
+
+    def setupMotor(self, **kwargs):
+
+        if self.motor_enable:
+            self.motor = Motor(left_forward_pin=32, left_reverse_pin=33, right_forward_pin=35, right_reverse_pin=37)
+            self.print('Motor object created.', 2)
+            #Here, the 4 actions will be, in order: forward (F), backward (B), CCW, clockwise turn (CW)
+            self.N_actions = 4
+            # This determines the order of the action indices (i.e., 0 is straight, 1 is backward, etc)
+            self.action_func_list = [self.motor.goStraight, self.motor.goBackward, self.motor.turn90CCW, self.motor.turn90CW]
+
+
+
+    def setupMQTT(self, **kwargs):
+        # Set up MQTT first, so it can be passed to DebugFile, for debugging purposes.
+        self.comm = None
+        if self.MQTT_enable:
+            #Compass uses I2C pins, which are 3 (SDA) and 5 (SCL) for the RPi 3.
+            self.comm = MQTTComm(broker_address='192.168.1.240')
+            self.print('MQTTComm object created.', 2)
+            self.print('Starting MQTT loop...', 2)
+            self.MQTT_loop_thread = threading.Thread(target=self.comm.startLoop, daemon=True)
+            self.MQTT_loop_thread.start()
+            self.print('MQTT loop started.', 2)
+
+
+    def setupTOF(self, **kwargs):
+
+        if self.TOF_enable:
+            self.print('Creating TOF objects...', 2)
+            self.TOF_forward = TOF(GPIO_SHUTDOWN=8, i2c_address=0x2a)
+            self.TOF_left = TOF(GPIO_SHUTDOWN=22, i2c_address=0x2b)
+            self.TOF_right = TOF(GPIO_SHUTDOWN=18, i2c_address=0x2c)
+            self.TOF_forward.tofOpen()
+            self.TOF_left.tofOpen()
+            self.TOF_right.tofOpen()
+            self.TOF_forward.tofStartRanging()
+            self.TOF_left.tofStartRanging()
+            self.TOF_right.tofStartRanging()
+            self.print('TOF objects created.', 2)
+
+
+
+    def setupArena(self, **kwargs):
+
+        if self.arena_mode:
+
+            # All units here are in meters, and with respect to the origin being
+            # in the center of the arena.
+            self.N_pos_attempts = 5
+            self.wall_length = 1.25
+            self.xlims = np.array([-self.wall_length/2, self.wall_length/2])
+            self.ylims = np.array([-self.wall_length/2, self.wall_length/2])
+            self.position = np.array([0.5*(max(self.xlims) + min(self.xlims)), 0.5*(max(self.ylims) + min(self.ylims))])
+            self.last_position = self.position
+            self.bottom_corner = np.array([self.xlims[0], self.ylims[0]])
+            self.lims = np.array((self.xlims,self.ylims))
+            self.robot_draw_rad = self.wall_length/20.0
+            self.target_draw_rad = self.robot_draw_rad
+
+            self.dist_meas_percent_tolerance = 0.05
+
+            self.target_positions = np.array([
+            [.19, 0],
+            [.55, 0],
+            [self.wall_length, .21],
+            [self.wall_length, .65],
+            [.97, self.wall_length],
+            [.58, self.wall_length],
+            [0, 1.02],
+            [0, .60]])
+            # This makes it so the target positions are w.r.t. the origin at the center.
+            self.target_positions = np.array([self.cornerOriginToCenterOrigin(pos) for pos in self.target_positions])
+            #These will be the positions in meters, where (0,0) is the center of the arena.
+
+            self.N_targets = len(self.target_positions)
+            self.current_target = 0
+            self.print('Current target is: {}'.format(self.current_target), 2)
+
+            # This determines whether we're going to get the rewards from the IR
+            # sensors, or just calc. whether we're close enough in distance.
+            self.reward_method = kwargs.get('reward_method', 'MQTT')
+            if self.reward_method == 'MQTT':
+                #This is in terms of x and y, from the bottom left corner.
+                # This is because right now, #2 isn't working...
+                # These are counting starting from 1
+                self.valid_targets = np.array([1, 2, 3, 6, 8])
+                # This makes it so they're 0 indexed now
+                self.valid_targets -= 1
+
+                # Set actual target. Only work if MQTT enabled but we'll only be
+                # here if arena_mode is enabled.
+                test_IR_read = self.pollTargetServer()
+                self.print('test IR read: {}'.format(test_IR_read), 2)
+                assert len(test_IR_read)==self.N_targets, 'Number of targets ({}) returned from MQTTComm doesn\'t match N_targets ({}) '.format(len(test_IR_read), self.N_targets)
+
+            else:
+                # In this case, we're just gonna give the reward directly, based on its distance.
+                self.reward_distance_thresh = 0.15
+                self.valid_targets = np.array(list(range(8)))
+
+            self.state_type = kwargs.get('state_type', 'position')
+
+            self.N_state_terms = len(self.getStateVec())
+            self.resetStateValues()
+            self.print('Robot has a state vec of length: {}'.format(self.N_state_terms), 2)
 
 
     def __del__(self):

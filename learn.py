@@ -7,6 +7,7 @@ import FileSystemTools as fst
 from RobotTools import RobotTools
 import argparse
 import json
+import os
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--path', default=None)
@@ -48,15 +49,16 @@ else:
     eps_decay = 0.9997,
     eps_min = 0.05,
     N_batch = 100,
-    N_hidden_layer_nodes = 50,
+    N_hidden_layer_nodes = 40,
     target_update = 500,
     double_DQN = False,
     NL_fn = 'tanh',
+    two_hidden_layers = True,
 
     reward_method = 'software',
     debug_enable = 0,
     compass_correction_file = '18-02-2019_12-25-37_compass_cal.json',
-    state_type = 'distances'
+    state_type = 'position'
     )
 
     resume_dict = {}

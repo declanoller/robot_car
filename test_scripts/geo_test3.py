@@ -251,6 +251,46 @@ def calculatePosition(d1, d2, d3, theta):
     return(sol)
 
 
+def posAngleToCollideVec(pos, ang):
+    #
+    # This takes a proposed position and angle, and returns the vector
+    # that would collide with the wall it would hit at that angle.
+    #
+    # This assumes *lower left* origin coords.
+    #
+    # The angle bds here are the 4 angle bounds that determine
+    # for a given x,y which wall the ray in that direction would collide with.
+    # The order is: top wall, left wall, bottom wall, right wall
+
+    x = pos[0]
+    y = pos[1]
+
+    angle_bds = [
+    np.arctan2(wall_length-y, wall_length-x),
+    np.arctan2(wall_length-y, -x),
+    np.arctan2(-y, -x),
+    np.arctan2(-y, wall_length-x),
+    ]
+
+    ray_x, ray_y = 0, 0
+
+    if (ang >= angle_bds[0]) and (ang < angle_bds[1]):
+        ray_y = wall_length - y
+        ray_x = ray_y/tan(ang)
+
+    elif (ang >= angle_bds[1]) or (ang < angle_bds[2]):
+        ray_x = -x
+        ray_y = ray_x*tan(ang)
+
+    elif (ang >= angle_bds[2]) and (ang < angle_bds[3]):
+        ray_y = -y
+        ray_x = ray_y/tan(ang)
+
+    elif (ang >= angle_bds[3]) and (ang < angle_bds[0]):
+        ray_x = wall_length - x
+        ray_y = ray_x*tan(ang)
+
+    return(np.array([ray_x, ray_y]))
 
 
 
@@ -261,16 +301,7 @@ d2=0.22
 d3=1.02
 angle= -1.24
 
-# pos. calcd in calcPosition=(-0.427, 0.082)
-d1=0.939
-d2=0.305
-d3=0.263
-angle=-0.853
 
-d1=0.920
-d2=0.306
-d3=0.263
-angle=-0.863
 
 fig, ax = plt.subplots(1,1, figsize=(6,6))
 

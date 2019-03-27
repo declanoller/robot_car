@@ -38,6 +38,25 @@ class DQN(nn.Module):
 		return(x)
 
 
+class DQN_2layer(nn.Module):
+
+	def __init__(self, D_in, H1, H2, D_out, NL_fn=torch.tanh):
+		super(DQN_2layer, self).__init__()
+
+		self.lin1 = nn.Linear(D_in,H1)
+		self.lin2 = nn.Linear(H1, H2)
+		self.lin3 = nn.Linear(H2, D_out)
+		self.NL_fn = NL_fn
+
+	def forward(self, x):
+		x = self.lin1(x)
+		x = self.NL_fn(x)
+		x = self.lin2(x)
+		x = self.NL_fn(x)
+		x = self.lin3(x)
+		return(x)
+
+
 class Agent:
 
 	def __init__(self, **kwargs):
@@ -62,6 +81,7 @@ class Agent:
 		self.params['N_hidden_layer_nodes'] = int(kwargs.get('N_hidden_layer_nodes',100))
 		self.params['target_update'] = int(kwargs.get('target_update',500))
 		self.params['double_DQN'] = kwargs.get('double_DQN',False)
+		self.params['two_hidden_layers'] = kwargs.get('two_hidden_layers', False)
 
 		self.params['features'] = kwargs.get('features','DQN')
 		self.params['NL_fn'] = kwargs.get('NL_fn','tanh')
@@ -143,13 +163,17 @@ class Agent:
 		if self.params['features'] == 'DQN':
 			#This is using a "target" Q network and a "policy" Q network, with
 			#experience replay.
+			NL_fn = NL_fn_dict[self.params['NL_fn']]
 
 			D_in, H, D_out = self.agent.N_state_terms, self.params['N_hidden_layer_nodes'], self.agent.N_actions
 
-			NL_fn = NL_fn_dict[self.params['NL_fn']]
-
-			self.policy_NN = DQN(D_in,H,D_out,NL_fn=NL_fn)
-			self.target_NN = DQN(D_in,H,D_out,NL_fn=NL_fn)
+			if self.params['two_hidden_layers']:
+				print('Using two hidden layer NN!')
+				self.policy_NN = DQN_2layer(D_in, H, H, D_out, NL_fn=NL_fn)
+				self.target_NN = DQN_2layer(D_in, H, H, D_out, NL_fn=NL_fn)
+			else:
+				self.policy_NN = DQN(D_in, H, D_out, NL_fn=NL_fn)
+				self.target_NN = DQN(D_in, H, D_out, NL_fn=NL_fn)
 
 			if str(self.device) == 'cuda':
 				self.policy_NN.cuda()
@@ -265,7 +289,6 @@ class Agent:
 			print('\nrun stopped, saving model and plots. Reason for stop:')
 			print(tb.format_exc())
 			exit_code = 1
-			#del self.agent
 
 		'''if save_plot:
 			self.plotAll()
@@ -950,6 +973,10 @@ class Agent:
 	def showFig(self):
 		plt.show(block=False)
 
+
+
+	def __del__(self):
+		del self.agent
 
 
 	#################################### scrap

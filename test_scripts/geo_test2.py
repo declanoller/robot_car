@@ -1,5 +1,5 @@
 import numpy as np
-from math import pi, sin, cos
+from math import pi, sin, cos, tan
 import matplotlib.pyplot as plt
 
 
@@ -250,19 +250,80 @@ def calculatePosition(d1, d2, d3, theta):
 
 
 
+def posAngleToCollideVec(pos, ang):
+    #
+    # This takes a proposed position and angle, and returns the vector
+    # that would collide with the wall it would hit at that angle.
+    #
+    # This assumes *lower left* origin coords.
+    #
+    # The angle bds here are the 4 angle bounds that determine
+    # for a given x,y which wall the ray in that direction would collide with.
+    # The order is: top wall, left wall, bottom wall, right wall
+
+    x = pos[0]
+    y = pos[1]
+
+    angle_bds = [
+    np.arctan2(wall_length-y, wall_length-x),
+    np.arctan2(wall_length-y, -x),
+    np.arctan2(-y, -x),
+    np.arctan2(-y, wall_length-x),
+    ]
+
+    ray_x, ray_y = 0, 0
+
+    if (ang >= angle_bds[0]) and (ang < angle_bds[1]):
+        ray_y = wall_length - y
+        ray_x = ray_y/tan(ang)
+
+    elif (ang >= angle_bds[1]) or (ang < angle_bds[2]):
+        ray_x = -x
+        ray_y = ray_x*tan(ang)
+
+    elif (ang >= angle_bds[2]) and (ang < angle_bds[3]):
+        ray_y = -y
+        ray_x = ray_y/tan(ang)
+
+    elif (ang >= angle_bds[3]) and (ang < angle_bds[0]):
+        ray_x = wall_length - x
+        ray_y = ray_x*tan(ang)
+
+    return(np.array([ray_x, ray_y]))
 
 
-#
+
+pos = np.array([xlims[1]/2, .5])
+pos_LL = pos - bottom_corner
+print(pos)
+ang = pi/6.0
+cv_1 = posAngleToCollideVec(pos_LL, ang)
+cv_2 = posAngleToCollideVec(pos_LL, ang + pi/2)
+cv_3 = posAngleToCollideVec(pos_LL, ang - pi/2)
+
+d1 = np.linalg.norm(cv_1)
+d2 = np.linalg.norm(cv_2)
+d3 = np.linalg.norm(cv_3)
+print(d1, d2, d3)
+
+#exit()
+
+'''# opp and same
 d1 = .58
-d2 = 1.5
+d2 = 1.4
 d3 = .16
 ang = -2.6
+
+
 pos = calculatePosition(d1,d2,d3,ang)
+pos = np.array([-.12, .48])
+print(pos)'''
 
-print(pos)
-
-
-
+pos = np.array([.5, 0])
+d1 = .35
+d2 = 1.3
+d3 = .1
+ang = .4*pi
 
 fig, ax = plt.subplots(1,1, figsize=(6,6))
 
@@ -277,11 +338,27 @@ puck = plt.Circle(pos, 0.02, color='tomato')
 ax.add_artist(puck)
 
 tail = pos
-tweak = 0.4
-w = 0.002
-ax.arrow(x, y, d1*cos(ang), d1*sin(ang), width=w, head_width=8*w, color='black')
-ax.arrow(x, y, d2*cos(ang + pi/2), d2*sin(ang + pi/2), width=w, head_width=8*w, color='red')
-ax.arrow(x, y, d3*cos(ang - pi/2), d3*sin(ang - pi/2), width=w, head_width=8*w, color='blue')
+tweak = 0.875
+w = 0.004
+
+x1, y1 = d1*cos(ang), d1*sin(ang)
+x2, y2 = d2*cos(ang + pi/2), d2*sin(ang + pi/2)
+x3, y3 = d3*cos(ang - pi/2), d3*sin(ang - pi/2)
+
+
+ax.arrow(x, y, tweak*d1*cos(ang), tweak*d1*sin(ang), width=w, head_width=8*w, color='black')
+#ax.axvline(xlims[1] - x1, 0, ((ylims[1] - y1) - ylims[0])/wall_length, color='gray', linewidth=4, linestyle='dotted')
+#ax.axhline(ylims[1] - y1, 0, ((xlims[1] - x1) - xlims[0])/wall_length, color='gray', linewidth=4, linestyle='dotted')
+
+
+ax.arrow(x, y, tweak*d2*cos(ang + pi/2), tweak*d2*sin(ang + pi/2), width=w, head_width=8*w, color='red')
+#ax.axhline(ylims[1] - y1, abs(x2)/wall_length, ((xlims[1] - x1) - xlims[0])/wall_length, color='gray', linewidth=4, linestyle='dotted')
+
+ax.arrow(x, y, tweak*d3*cos(ang - pi/2), tweak*d3*sin(ang - pi/2), width=w, head_width=8*w, color='blue')
+
+# Hard case
+ax.axvline(x, abs(y3)/wall_length, ((ylims[1] - abs(y1)) - ylims[0])/wall_length, color='gray', linewidth=4, linestyle='dotted')
+
 plt.show()
 
 
