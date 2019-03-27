@@ -11,6 +11,8 @@ Overview
 
 This is the set of programs and classes I used to have a robot learn the game usually called "puckworld", using Q learning with experience replay. It probably won't be directly useful to anyone else (it has a lot of things specific to my setup, like sensors and geometry), but it could probably be easily modified.
 
+A long summary of the results can be found [on my blog here](https://www.declanoller.com/2019/03/27/training-a-real-robot-to-play-puckworld-with-reinforcement-learning/).
+
 
 
 Main run scripts
