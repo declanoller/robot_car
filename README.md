@@ -2,6 +2,8 @@
 Robot Reinforcement Learning Project
 =========================================
 
+![alt text](https://github.com/declanoller/robot_car/blob/master/other/robo_blog_cover.png "")
+
 
 Overview
 -----------------------
